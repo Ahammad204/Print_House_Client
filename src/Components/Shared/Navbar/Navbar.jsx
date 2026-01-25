@@ -13,7 +13,7 @@ const Navbar = () => {
               : ""
           }
         >
-          Home
+          হোম
         </NavLink>
       </li>
 
@@ -26,7 +26,7 @@ const Navbar = () => {
               : ""
           }
         >
-          All Product
+          সকল পণ্য 
         </NavLink>
       </li>
 
@@ -62,7 +62,7 @@ const Navbar = () => {
              {navLink}
           </ul>
         </div>
-        <a className="btn btn-ghost text-xl">daisyUI</a>
+        <a className="btn btn-ghost text-xl">কাজী গিফট এন্ড প্রিন্ট হাউস</a>
       </div>
       <div className="navbar-center hidden lg:flex">
         <ul className="menu menu-horizontal px-1">
