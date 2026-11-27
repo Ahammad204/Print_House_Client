@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, LONG_TRANSACTION } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import {
   ALLOWED_TRANSITIONS,
@@ -23,6 +23,35 @@ function revalidateOrder(orderId: string) {
   revalidatePath(`/admin/orders/${orderId}`);
   revalidatePath("/admin/orders");
   revalidatePath("/admin/dashboard");
+}
+
+/**
+ * H13/M22: a failed transaction must never reach the admin as raw Prisma
+ * text (seen live 27 Nov 2026: a cancel timeout surfaced the whole
+ * "Invalid `prisma.orderStatusHistory.create()` invocation..." message in
+ * the toast). Known business errors thrown by the actions above pass
+ * through verbatim; anything Prisma/infrastructure-shaped is logged
+ * server-side and replaced with one generic, retry-able message.
+ */
+const GENERIC_ORDER_ERROR = "The request took too long. Please try again.";
+
+function orderActionError(e: unknown, fallback: string): string {
+  const isPrismaError =
+    e instanceof Prisma.PrismaClientKnownRequestError ||
+    e instanceof Prisma.PrismaClientUnknownRequestError ||
+    e instanceof Prisma.PrismaClientRustPanicError ||
+    e instanceof Prisma.PrismaClientInitializationError ||
+    e instanceof Prisma.PrismaClientValidationError;
+  const message = e instanceof Error ? e.message : "";
+  const isTimeoutText =
+    /transaction already closed/i.test(message) ||
+    /transaction .*timed out/i.test(message) ||
+    /timed out/i.test(message);
+  if (isPrismaError || isTimeoutText) {
+    console.error("[admin order action] unexpected error:", e);
+    return GENERIC_ORDER_ERROR;
+  }
+  return message || fallback;
 }
 
 /**
@@ -68,13 +97,13 @@ export async function advanceOrderStatus(
         );
       }
       await transitionOrderStatus(tx, orderId, toStatus, "admin", admin.id);
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : "Could not update the order.",
+      error: orderActionError(e, "Could not update the order."),
     };
   }
 }
@@ -143,13 +172,13 @@ export async function cancelOrder(
           data: { paymentStatus: "unpaid" },
         });
       }
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : "Could not cancel the order.",
+      error: orderActionError(e, "Could not cancel the order."),
     };
   }
 }
@@ -218,14 +247,14 @@ export async function markPaymentReceived(
       );
       await recomputePaymentStatus(tx, order.id);
       await createNotification(tx, order.id, order.customerId, "payment_verified");
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
       error:
-        e instanceof Error ? e.message : "Could not record the payment.",
+        orderActionError(e, "Could not record the payment."),
     };
   }
 }
@@ -315,14 +344,14 @@ export async function verifyMobilePayment(
         payment.order.customerId,
         "payment_verified"
       );
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
       error:
-        e instanceof Error ? e.message : "Could not verify the payment.",
+        orderActionError(e, "Could not verify the payment."),
     };
   }
 }
@@ -356,14 +385,14 @@ export async function rejectMobilePayment(
         data: { status: "rejected" },
       });
       await recomputePaymentStatus(tx, orderId);
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
       error:
-        e instanceof Error ? e.message : "Could not reject the payment.",
+        orderActionError(e, "Could not reject the payment."),
     };
   }
 }
@@ -391,13 +420,13 @@ export async function addInternalNote(
         admin.id,
         note
       );
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : "Could not add the note.",
+      error: orderActionError(e, "Could not add the note."),
     };
   }
 }
@@ -441,16 +470,14 @@ export async function updateDeliveryInfo(
           instructions: parsed.data.instructions || null,
         },
       });
-    });
+    }, LONG_TRANSACTION);
     revalidateOrder(orderId);
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
       error:
-        e instanceof Error
-          ? e.message
-          : "Could not update the delivery details.",
+        orderActionError(e, "Could not update the delivery details."),
     };
   }
 }
