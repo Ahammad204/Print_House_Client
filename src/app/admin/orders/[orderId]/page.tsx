@@ -16,6 +16,7 @@ import {
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_STATUS_LABELS,
+  formatDeliveryAddress,
 } from "@/lib/orders";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -119,16 +120,9 @@ export default async function AdminOrderDetailPage({
     order.paymentStatus !== "refunded" &&
     order.paymentStatus !== "partially_refunded";
 
-  const deliveryAddress = [
-    order.deliveryAddress,
-    order.area,
-    order.upazila,
-    order.district,
-    order.division,
-    order.postalCode,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  // One shared formatter (see lib/orders.ts) — same string as tracking,
+  // the order success page and the invoice.
+  const deliveryAddress = formatDeliveryAddress(order);
 
   const waNumber = whatsappNumber(order.customerPhone);
   const waMessage = encodeURIComponent(

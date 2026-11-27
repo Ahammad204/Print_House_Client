@@ -4,7 +4,7 @@ import { CheckCircle2, MessageCircle, Package } from "lucide-react";
 import { db as prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { getCustomerSession } from "@/lib/customer-auth";
-import { getOrderByNumber, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, PAYMENT_STATUS_LABELS } from "@/lib/orders";
+import { getOrderByNumber, ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS, PAYMENT_STATUS_LABELS, formatDeliveryAddress } from "@/lib/orders";
 import { formatBDT, formatDateTime } from "@/lib/utils";
 import Navbar from "@/components/public/Navbar";
 import Footer from "@/components/public/Footer";
@@ -90,16 +90,9 @@ export default async function OrderSuccessPage({
     address: settings.address || "",
   };
 
-  const deliveryAddress = [
-    order.deliveryAddress,
-    order.area,
-    order.upazila,
-    order.district,
-    order.division,
-    order.postalCode,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  // One shared formatter (see lib/orders.ts) so this page shows exactly
+  // the same full address as tracking, admin and the invoice.
+  const deliveryAddress = formatDeliveryAddress(order);
 
   return (
     <>
@@ -149,7 +142,7 @@ export default async function OrderSuccessPage({
                 {order.deliveryMethod === "pickup" ? "Shop Pickup" : "Home Delivery"}
               </p>
               {order.deliveryMethod !== "pickup" && (
-                <p className="text-sm text-slate-600">{deliveryAddress}</p>
+                <p className="text-sm break-words text-slate-600">{deliveryAddress}</p>
               )}
               <p className="text-sm text-slate-600">
                 {order.deliveryName} — {maskPhone(order.deliveryPhone)}

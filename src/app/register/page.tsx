@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { Eye, EyeOff, Gift, Loader2, Lock, Mail, Phone, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,8 @@ import { clearGuestCart, readGuestCart } from "@/lib/cart-store";
 export const dynamic = "force-dynamic";
 
 export default function CustomerRegisterPage() {
-  const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next") ?? "";
   const [state, formAction, isPending] = useActionState(customerRegister, null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -36,29 +37,44 @@ export default function CustomerRegisterPage() {
   }, []);
 
   // On success: merge the guest cart into the new account cart first
-  // (best effort), then navigate to the account dashboard.
+  // (best effort, with a timeout so a slow database can never strand the
+  // user on this page), then navigate with a FULL page load so the fresh
+  // session cookie is used and no stale client-router cache can keep the
+  // user on the register form.
   useEffect(() => {
     if (!state?.ok || !state.redirectTo || mergedRef.current) return;
     mergedRef.current = true;
     const redirectTo = state.redirectTo;
+    const name = state.name;
     (async () => {
       const items = readGuestCart();
       if (items.length > 0) {
         try {
-          await fetch("/api/cart/merge", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items }),
-          });
+          const res = await Promise.race([
+            fetch("/api/cart/merge", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ items }),
+            }),
+            new Promise<null>((resolve) =>
+              setTimeout(() => resolve(null), 5000),
+            ),
+          ]);
+          // Only drop the guest cart once the server confirms the merge;
+          // on failure/timeout it stays so nothing is silently lost.
+          if (res && res.ok) clearGuestCart();
         } catch {
           // Tolerate merge failures silently.
         }
-        clearGuestCart();
       }
-      toast.success("Welcome to Kazi Gift and Print House!");
-      router.push(redirectTo);
+      toast.success(
+        name
+          ? `Welcome, ${name}! Your account has been created.`
+          : "Welcome! Your account has been created.",
+      );
+      window.location.href = redirectTo;
     })();
-  }, [state, router]);
+  }, [state]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface px-4 py-12">
@@ -91,6 +107,7 @@ export default function CustomerRegisterPage() {
               </p>
             ) : (
               <form action={formAction} className="space-y-4">
+                <input type="hidden" name="next" value={next} />
                 <div className="space-y-2">
                   <Label htmlFor="name">Full name</Label>
                   <div className="relative">

@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { Eye, EyeOff, Gift, Loader2, Lock, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,6 @@ import { clearGuestCart, readGuestCart } from "@/lib/cart-store";
 export const dynamic = "force-dynamic";
 
 export default function CustomerLoginPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "";
   const [state, formAction, isPending] = useActionState(customerLogin, null);
@@ -36,8 +35,10 @@ export default function CustomerLoginPage() {
   }, []);
 
   // On success: merge the guest cart into the account cart first
-  // (best effort — a missing/failing endpoint must not block login),
-  // then navigate to the requested page.
+  // (best effort, with a timeout so a slow database can never strand the
+  // user on this page), then navigate with a FULL page load so the fresh
+  // session cookie is used and no stale client-router cache can keep the
+  // user on the login form.
   useEffect(() => {
     if (!state?.ok || !state.redirectTo || mergedRef.current) return;
     mergedRef.current = true;
@@ -46,20 +47,27 @@ export default function CustomerLoginPage() {
       const items = readGuestCart();
       if (items.length > 0) {
         try {
-          await fetch("/api/cart/merge", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items }),
-          });
+          const res = await Promise.race([
+            fetch("/api/cart/merge", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ items }),
+            }),
+            new Promise<null>((resolve) =>
+              setTimeout(() => resolve(null), 5000),
+            ),
+          ]);
+          // Only drop the guest cart once the server confirms the merge;
+          // on failure/timeout it stays so nothing is silently lost.
+          if (res && res.ok) clearGuestCart();
         } catch {
           // Tolerate merge failures silently.
         }
-        clearGuestCart();
       }
       toast.success("Welcome back!");
-      router.push(redirectTo);
+      window.location.href = redirectTo;
     })();
-  }, [state, router]);
+  }, [state]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface px-4 py-12">

@@ -3,6 +3,7 @@ import {
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_STATUS_LABELS,
+  formatDeliveryAddress,
 } from "@/lib/orders";
 import type { InvoiceOrder, InvoiceShop } from "@/lib/invoice-pdf";
 
@@ -18,16 +19,9 @@ export default function InvoiceDocument({
   order: InvoiceOrder;
   shop: InvoiceShop;
 }) {
-  const address = [
-    order.deliveryAddress,
-    order.area,
-    order.upazila,
-    order.district,
-    order.division,
-    order.postalCode,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  // One shared formatter (see lib/orders.ts) — same string as tracking,
+  // the order success page and admin.
+  const address = formatDeliveryAddress(order);
 
   return (
     <div className="print-area rounded-xl border border-slate-200 bg-white p-6 text-slate-800 sm:p-8">

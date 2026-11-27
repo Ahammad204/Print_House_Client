@@ -219,6 +219,31 @@ export function calculateDeliveryFee(
   return settings.defaultDeliveryFee;
 }
 
+/**
+ * Full delivery address from the stored parts, in ONE place so every
+ * surface (order success, tracking, admin, invoice) renders exactly the
+ * same string. Empty parts are dropped; nothing is truncated.
+ */
+export function formatDeliveryAddress(order: {
+  deliveryAddress: string;
+  area?: string | null;
+  upazila?: string | null;
+  district?: string | null;
+  division?: string | null;
+  postalCode?: string | null;
+}): string {
+  return [
+    order.deliveryAddress,
+    order.area,
+    order.upazila,
+    order.district,
+    order.division,
+    order.postalCode,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
 // ---------------------------------------------------------------------------
 // Order history + notifications
 // ---------------------------------------------------------------------------

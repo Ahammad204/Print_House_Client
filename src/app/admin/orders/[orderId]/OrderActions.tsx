@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { Check, MessageSquare, Pencil, X } from "lucide-react";
+import { Check, Loader2, MessageSquare, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,6 +35,7 @@ export function StatusButtons({
   orderId: string;
   nextStatuses: string[];
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -53,11 +55,22 @@ export function StatusButtons({
               toast.success(
                 `Order moved to ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`
               );
+              // revalidatePath in the action purges the server cache, but
+              // the client only shows the new status once it re-fetches
+              // this route — refresh explicitly so the update appears
+              // immediately instead of after a stale-cache delay.
+              router.refresh();
             });
           }}
         >
-          <Check className="mr-1.5 h-4 w-4" />
-          Mark as {ORDER_STATUS_LABELS[toStatus] ?? toStatus}
+          {isPending ? (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          ) : (
+            <Check className="mr-1.5 h-4 w-4" />
+          )}
+          {isPending
+            ? "Updating…"
+            : `Mark as ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`}
         </Button>
       ))}
     </div>
@@ -65,6 +78,7 @@ export function StatusButtons({
 }
 
 export function CancelOrderButton({ orderId }: { orderId: string }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -82,6 +96,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       toast.success("Order cancelled");
       setOpen(false);
       setReason("");
+      router.refresh();
     });
   }
 
@@ -142,6 +157,7 @@ export function MarkPaymentReceivedButton({
   orderId: string;
   remaining: number;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -156,6 +172,7 @@ export function MarkPaymentReceivedButton({
             return;
           }
           toast.success("Payment received and recorded as income");
+          router.refresh();
         });
       }}
     >
@@ -172,6 +189,7 @@ export function PaymentVerifyButtons({
   orderId: string;
   paymentId: string;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   return (
@@ -188,6 +206,7 @@ export function PaymentVerifyButtons({
               return;
             }
             toast.success("Payment verified and recorded as income");
+            router.refresh();
           });
         }}
       >
@@ -208,6 +227,7 @@ export function PaymentVerifyButtons({
               return;
             }
             toast.success("Payment rejected");
+            router.refresh();
           });
         }}
       >
@@ -219,6 +239,7 @@ export function PaymentVerifyButtons({
 }
 
 export function NoteForm({ orderId }: { orderId: string }) {
+  const router = useRouter();
   const [note, setNote] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -234,6 +255,7 @@ export function NoteForm({ orderId }: { orderId: string }) {
       }
       toast.success("Note added");
       setNote("");
+      router.refresh();
     });
   }
 
@@ -276,6 +298,7 @@ export function DeliveryForm({
   orderId: string;
   initial: DeliveryInfo;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -290,6 +313,7 @@ export function DeliveryForm({
       }
       toast.success("Delivery details updated");
       setOpen(false);
+      router.refresh();
     });
   }
 

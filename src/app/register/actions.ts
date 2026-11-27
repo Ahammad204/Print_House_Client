@@ -20,7 +20,17 @@ export type CustomerRegisterState = {
   error?: string;
   ok?: boolean;
   redirectTo?: string;
+  /** New customer's name, for the welcome toast. */
+  name?: string;
 } | null;
+
+/** Only allow safe in-app redirects: absolute paths, never /admin. */
+function safeNext(raw: string | undefined): string {
+  if (!raw) return "/account";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/account";
+  if (raw === "/admin" || raw.startsWith("/admin/")) return "/account";
+  return raw;
+}
 
 const registerSchema = z
   .object({
@@ -30,6 +40,7 @@ const registerSchema = z
     password: z.string().min(1, "Password is required."),
     confirmPassword: z.string().min(1, "Please confirm your password."),
     terms: z.string().optional(),
+    next: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (!isValidBdPhone(data.phone)) {
@@ -89,6 +100,7 @@ export async function customerRegister(
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword"),
     terms: formData.get("terms"),
+    next: formData.get("next") || undefined,
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
@@ -127,14 +139,34 @@ export async function customerRegister(
     }
   }
 
-  const customer = await db.customer.create({
-    data: {
-      name: parsed.data.name.trim(),
-      phone,
-      email,
-      password: await hashPassword(parsed.data.password),
-      status: "active",
-    },
+  const customer = await db.$transaction(async (tx) => {
+    const created = await tx.customer.create({
+      data: {
+        name: parsed.data.name.trim(),
+        phone,
+        email,
+        password: await hashPassword(parsed.data.password),
+        status: "active",
+      },
+    });
+
+    // Link guest orders placed earlier with the same phone number to the
+    // new account, so they show up in /account/orders. A guest order that
+    // carries an email only links when it matches the registering email,
+    // so another customer's orders can never be claimed.
+    await tx.order.updateMany({
+      where: {
+        customerId: null,
+        customerPhone: phone,
+        OR: [
+          { customerEmail: null },
+          ...(email ? [{ customerEmail: email }] : []),
+        ],
+      },
+      data: { customerId: created.id },
+    });
+
+    return created;
   });
 
   const { token, maxAge } = await createCustomerSessionToken(customer.id, false);
@@ -143,6 +175,10 @@ export async function customerRegister(
   cookieStore.set(name, token, cookieOptions);
 
   // No redirect() here: the client page merges the guest cart first,
-  // then navigates to /account.
-  return { ok: true, redirectTo: "/account" };
+  // then navigates to redirectTo with a full page load.
+  return {
+    ok: true,
+    redirectTo: safeNext(parsed.data.next),
+    name: customer.name,
+  };
 }

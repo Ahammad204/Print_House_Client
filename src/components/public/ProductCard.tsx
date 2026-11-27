@@ -63,6 +63,14 @@ export default function ProductCard({ product }: { product: PublicProduct }) {
             </span>
           )}
         </div>
+        {/* Same product.stock every other surface reads (detail page,
+            cart, checkout, admin inventory) — shown here so the list can
+            never silently disagree with them. */}
+        {product.status === "available" && (
+          <p className="mt-1 text-xs text-slate-500">
+            In stock: {product.stock}
+          </p>
+        )}
         <Link
           href={`/products/${product.slug}`}
           className="mt-4 inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark"

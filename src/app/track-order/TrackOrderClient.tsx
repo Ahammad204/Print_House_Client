@@ -7,6 +7,7 @@ import {
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_STATUS_LABELS,
+  formatDeliveryAddress,
 } from "@/lib/orders";
 import { trackOrder } from "./actions";
 
@@ -18,18 +19,9 @@ export default function TrackOrderClient() {
   const [state, formAction, isPending] = useActionState(trackOrder, null);
   const order = state?.order ?? null;
 
-  const deliveryAddress = order
-    ? [
-        order.deliveryAddress,
-        order.area,
-        order.upazila,
-        order.district,
-        order.division,
-        order.postalCode,
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : "";
+  // One shared formatter (see lib/orders.ts) — same string as the order
+  // success page, admin and the invoice.
+  const deliveryAddress = order ? formatDeliveryAddress(order) : "";
 
   return (
     <div>
