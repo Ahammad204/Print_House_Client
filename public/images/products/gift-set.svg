@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Customized gift set illustration">
+  <rect width="400" height="300" fill="#EFF6FF"/>
+  <circle cx="60" cy="60" r="30" fill="#DBEAFE"/>
+  <circle cx="340" cy="55" r="26" fill="#FEF3C7"/>
+  <ellipse cx="200" cy="254" rx="125" ry="13" fill="#14213D" opacity="0.08"/>
+  <!-- small gift box -->
+  <rect x="228" y="168" width="96" height="76" rx="8" fill="#14213D"/>
+  <rect x="220" y="148" width="112" height="26" rx="8" fill="#2563EB"/>
+  <rect x="268" y="148" width="16" height="96" fill="#F59E0B"/>
+  <path d="M276 148 C262 128 240 132 246 146 C250 156 266 154 276 148 Z" fill="#F59E0B"/>
+  <path d="M276 148 C290 128 312 132 306 146 C302 156 286 154 276 148 Z" fill="#F59E0B"/>
+  <!-- customized mug -->
+  <path d="M96 150 h12 a26 26 0 0 1 0 52 h-12" fill="none" stroke="#14213D" stroke-width="14"/>
+  <path d="M52 128 h88 v84 a18 18 0 0 1 -18 18 h-52 a18 18 0 0 1 -18 -18 z" fill="#2563EB"/>
+  <rect x="52" y="166" width="88" height="12" fill="#F59E0B"/>
+  <path d="M96 186 c-7 -6 -16 -10 -16 -19 a9 9 0 0 1 16 -5 a9 9 0 0 1 16 5 c0 9 -9 13 -16 19 z" fill="#FFFFFF"/>
+  <path d="M76 120 q-5 -10 0 -18" fill="none" stroke="#94A3B8" stroke-width="4" stroke-linecap="round"/>
+  <!-- mini frame behind -->
+  <rect x="150" y="92" width="90" height="104" rx="8" fill="#FFFFFF" stroke="#14213D" stroke-width="6"/>
+  <rect x="160" y="102" width="70" height="84" fill="#BFDBFE"/>
+  <circle cx="210" cy="124" r="10" fill="#F59E0B"/>
+  <path d="M160 168 L185 142 L205 162 L220 148 L230 158 L230 186 L160 186 Z" fill="#2563EB"/>
+  <path d="M310 90 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z" fill="#F59E0B"/>
+</svg>

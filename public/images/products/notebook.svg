@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Notebook illustration">
+  <rect width="400" height="300" fill="#EFF6FF"/>
+  <circle cx="330" cy="60" r="34" fill="#FEF3C7"/>
+  <circle cx="60" cy="235" r="26" fill="#DBEAFE"/>
+  <ellipse cx="205" cy="254" rx="110" ry="13" fill="#14213D" opacity="0.08"/>
+  <!-- notebook -->
+  <g transform="rotate(-4 200 150)">
+    <rect x="120" y="60" width="170" height="190" rx="10" fill="#14213D"/>
+    <rect x="120" y="60" width="170" height="190" rx="10" fill="#2563EB"/>
+    <rect x="150" y="60" width="8" height="190" fill="#F59E0B"/>
+    <!-- spiral rings -->
+    <g fill="#F8FAFC">
+      <circle cx="120" cy="85" r="7"/><circle cx="120" cy="115" r="7"/>
+      <circle cx="120" cy="145" r="7"/><circle cx="120" cy="175" r="7"/>
+      <circle cx="120" cy="205" r="7"/><circle cx="120" cy="230" r="7"/>
+    </g>
+    <!-- lines -->
+    <g stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.75">
+      <line x1="180" y1="105" x2="265" y2="105"/>
+      <line x1="180" y1="130" x2="265" y2="130"/>
+      <line x1="180" y1="155" x2="250" y2="155"/>
+      <line x1="180" y1="180" x2="265" y2="180"/>
+    </g>
+    <rect x="180" y="200" width="62" height="26" rx="6" fill="#F59E0B"/>
+  </g>
+</svg>

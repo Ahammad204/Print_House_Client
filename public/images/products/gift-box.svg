@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Gift box illustration">
+  <rect width="400" height="300" fill="#EFF6FF"/>
+  <circle cx="330" cy="60" r="34" fill="#DBEAFE"/>
+  <circle cx="60" cy="230" r="26" fill="#FEF3C7"/>
+  <ellipse cx="200" cy="252" rx="110" ry="14" fill="#14213D" opacity="0.08"/>
+  <!-- gift box -->
+  <rect x="120" y="120" width="160" height="120" rx="8" fill="#14213D"/>
+  <rect x="120" y="120" width="160" height="120" rx="8" fill="#2563EB" opacity="0.12"/>
+  <rect x="185" y="120" width="30" height="120" fill="#F59E0B"/>
+  <rect x="105" y="92" width="190" height="38" rx="8" fill="#2563EB"/>
+  <rect x="185" y="92" width="30" height="38" fill="#F59E0B"/>
+  <!-- bow -->
+  <path d="M200 92 C170 55 130 60 140 82 C146 97 175 95 200 92 Z" fill="#F59E0B"/>
+  <path d="M200 92 C230 55 270 60 260 82 C254 97 225 95 200 92 Z" fill="#F59E0B"/>
+  <circle cx="200" cy="92" r="10" fill="#D97706"/>
+  <!-- sparkles -->
+  <path d="M320 130 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z" fill="#F59E0B"/>
+  <path d="M70 110 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3 z" fill="#2563EB"/>
+</svg>

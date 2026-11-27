@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Printed photos illustration">
+  <rect width="400" height="300" fill="#EFF6FF"/>
+  <circle cx="65" cy="60" r="32" fill="#FEF3C7"/>
+  <circle cx="335" cy="240" r="26" fill="#DBEAFE"/>
+  <ellipse cx="200" cy="254" rx="115" ry="13" fill="#14213D" opacity="0.08"/>
+  <!-- back photo -->
+  <g transform="rotate(8 240 140)">
+    <rect x="180" y="60" width="130" height="160" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="192" y="72" width="106" height="118" fill="#BFDBFE"/>
+    <circle cx="272" cy="98" r="14" fill="#F59E0B"/>
+    <path d="M192 170 L232 128 L262 158 L282 138 L298 154 L298 190 L192 190 Z" fill="#2563EB"/>
+  </g>
+  <!-- front photo -->
+  <g transform="rotate(-7 170 150)">
+    <rect x="105" y="70" width="135" height="165" rx="8" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="117" y="82" width="111" height="120" fill="#DBEAFE"/>
+    <circle cx="200" cy="112" r="16" fill="#F59E0B"/>
+    <path d="M117 180 L158 138 L190 170 L214 146 L228 162 L228 202 L117 202 Z" fill="#14213D"/>
+    <path d="M117 190 L150 160 L185 192 L210 168 L228 186 L228 202 L117 202 Z" fill="#2563EB"/>
+  </g>
+</svg>

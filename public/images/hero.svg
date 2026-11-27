@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img" aria-label="Kazi Gift and Print House hero illustration">
+  <rect width="800" height="500" fill="#EFF6FF"/>
+  <circle cx="700" cy="70" r="90" fill="#DBEAFE"/>
+  <circle cx="90" cy="420" r="70" fill="#FEF3C7"/>
+  <circle cx="660" cy="400" r="46" fill="#DBEAFE"/>
+  <ellipse cx="400" cy="452" rx="300" ry="18" fill="#14213D" opacity="0.08"/>
+  <!-- gift boxes, left -->
+  <g>
+    <rect x="70" y="300" width="150" height="120" rx="10" fill="#14213D"/>
+    <rect x="55" y="268" width="180" height="40" rx="10" fill="#2563EB"/>
+    <rect x="133" y="268" width="24" height="152" fill="#F59E0B"/>
+    <path d="M145 268 C122 238 92 242 100 260 C105 272 130 270 145 268 Z" fill="#F59E0B"/>
+    <path d="M145 268 C168 238 198 242 190 260 C185 272 160 270 145 268 Z" fill="#F59E0B"/>
+    <rect x="215" y="350" width="90" height="70" rx="8" fill="#F59E0B"/>
+    <rect x="205" y="330" width="110" height="26" rx="8" fill="#2563EB"/>
+    <rect x="252" y="330" width="16" height="90" fill="#FFFFFF"/>
+  </g>
+  <!-- printer, centre -->
+  <g>
+    <rect x="330" y="230" width="180" height="120" rx="12" fill="#14213D"/>
+    <rect x="330" y="230" width="180" height="120" rx="12" fill="#2563EB" opacity="0.15"/>
+    <rect x="360" y="196" width="120" height="46" rx="6" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="372" y="208" width="96" height="6" rx="3" fill="#94A3B8"/>
+    <rect x="372" y="222" width="70" height="6" rx="3" fill="#CBD5E1"/>
+    <rect x="365" y="330" width="110" height="64" rx="6" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="377" y="344" width="86" height="6" rx="3" fill="#2563EB"/>
+    <rect x="377" y="358" width="60" height="6" rx="3" fill="#94A3B8"/>
+    <circle cx="495" cy="262" r="12" fill="#F59E0B"/>
+    <circle cx="495" cy="262" r="5" fill="#FFFFFF"/>
+    <rect x="345" y="290" width="60" height="10" rx="5" fill="#F59E0B"/>
+  </g>
+  <!-- stationery, right -->
+  <g transform="rotate(-5 640 330)">
+    <rect x="585" y="240" width="130" height="170" rx="10" fill="#2563EB"/>
+    <rect x="585" y="240" width="130" height="170" rx="10" fill="#14213D" opacity="0.15"/>
+    <rect x="610" y="240" width="7" height="170" fill="#F59E0B"/>
+    <g stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.75">
+      <line x1="640" y1="285" x2="695" y2="285"/>
+      <line x1="640" y1="310" x2="695" y2="310"/>
+      <line x1="640" y1="335" x2="685" y2="335"/>
+    </g>
+  </g>
+  <g transform="rotate(28 640 200)">
+    <rect x="630" y="130" width="20" height="120" rx="9" fill="#F59E0B"/>
+    <rect x="630" y="130" width="20" height="30" rx="9" fill="#14213D"/>
+    <path d="M630 250 L640 272 L650 250 Z" fill="#94A3B8"/>
+  </g>
+  <!-- mug -->
+  <g>
+    <path d="M555 380 h10 a22 22 0 0 1 0 44 h-10" fill="none" stroke="#14213D" stroke-width="12"/>
+    <path d="M495 368 h60 v56 a14 14 0 0 1 -14 14 h-32 a14 14 0 0 1 -14 -14 z" fill="#2563EB"/>
+    <rect x="495" y="396" width="60" height="10" fill="#F59E0B"/>
+  </g>
+  <!-- sparkles -->
+  <path d="M300 120 l5 12 12 5 -12 5 -5 12 -5 -12 -12 -5 12 -5 z" fill="#F59E0B"/>
+  <path d="M740 200 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z" fill="#2563EB"/>
+  <path d="M120 180 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3 z" fill="#2563EB"/>
+</svg>

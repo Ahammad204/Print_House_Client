@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" role="img" aria-label="Mug illustration">
+  <rect width="400" height="300" fill="#EFF6FF"/>
+  <circle cx="70" cy="70" r="34" fill="#DBEAFE"/>
+  <circle cx="340" cy="230" r="26" fill="#FEF3C7"/>
+  <ellipse cx="200" cy="252" rx="105" ry="14" fill="#14213D" opacity="0.08"/>
+  <!-- steam -->
+  <path d="M175 78 q-8 -14 0 -26 q8 -12 0 -24" fill="none" stroke="#94A3B8" stroke-width="5" stroke-linecap="round"/>
+  <path d="M205 78 q-8 -14 0 -26 q8 -12 0 -24" fill="none" stroke="#94A3B8" stroke-width="5" stroke-linecap="round"/>
+  <!-- handle -->
+  <path d="M262 130 h18 a34 34 0 0 1 0 68 h-18" fill="none" stroke="#14213D" stroke-width="18"/>
+  <!-- mug body -->
+  <path d="M138 110 h124 v110 a22 22 0 0 1 -22 22 h-80 a22 22 0 0 1 -22 -22 z" fill="#2563EB"/>
+  <path d="M138 110 h124 v18 h-124 z" fill="#1D4ED8"/>
+  <!-- accent band + heart -->
+  <rect x="138" y="168" width="124" height="16" fill="#F59E0B"/>
+  <path d="M200 196 c-10 -8 -22 -14 -22 -26 a12 12 0 0 1 22 -7 a12 12 0 0 1 22 7 c0 12 -12 18 -22 26 z" fill="#FFFFFF"/>
+</svg>
