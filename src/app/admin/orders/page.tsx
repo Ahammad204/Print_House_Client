@@ -32,6 +32,11 @@ import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+// Never serve a cached copy of this page: the list must show the order's
+// current status right after an admin action. Same no-cache declaration
+// as the order detail page.
+export const revalidate = 0;
+
 const PAGE_SIZE = 20;
 
 const PAYMENT_STATUSES = [

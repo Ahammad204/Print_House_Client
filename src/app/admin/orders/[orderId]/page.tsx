@@ -53,6 +53,13 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// Never serve a cached copy of this page: order data changes on every
+// admin action, and a stale detail is how a cancelled order kept showing
+// as "Confirmed" after a mutation (seen live 27 Nov). Belt-and-braces
+// with force-dynamic above; the client also reconciles snapshots by
+// `updatedAt` (see optimistic-order.tsx).
+export const revalidate = 0;
+
 function whatsappNumber(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (digits.startsWith("880")) return digits;
@@ -102,6 +109,7 @@ export default async function AdminOrderDetailPage({
     verifiedPaid,
     remaining,
     pending: null,
+    updatedAt: order.updatedAt.toISOString(),
     payments: order.payments.map((p) => ({
       id: p.id,
       method: p.method,

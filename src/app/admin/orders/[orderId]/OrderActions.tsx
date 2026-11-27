@@ -44,6 +44,7 @@ import {
   pendingAffectsPayment,
   recomputeOptimisticPaymentStatus,
   useOptimisticOrder,
+  type OptimisticOrderSnapshot,
   type OptimisticPayment,
 } from "./optimistic-order";
 import {
@@ -89,6 +90,32 @@ const PAYMENT_BADGE_CLASS: Record<string, string> = {
  */
 const PENDING_BADGE_CLASS =
   "bg-slate-200 text-slate-600 hover:bg-slate-200 animate-pulse";
+
+/**
+ * Shared failure path for admin order actions. A failed action must be
+ * LOUD and must reconcile: the 4s default toast is easy to miss (seen
+ * live 27 Nov: cancelling an already-cancelled order reverted silently
+ * with no error shown), and without a refresh the UI keeps showing the
+ * stale snapshot that caused the failure — a refresh reveals the server
+ * truth (e.g. the order is already "Cancelled").
+ */
+function handleOrderActionFailure(
+  setOrder: React.Dispatch<
+    React.SetStateAction<OptimisticOrderSnapshot>
+  >,
+  router: { refresh(): void },
+  error: string
+) {
+  setOrder((s) => ({ ...s, pending: null }));
+  toast.error(error, { duration: 8000 });
+  router.refresh();
+}
+
+/** Message for a server action that threw (network / timeout) instead of
+    returning { ok: false }. Without the try/catch around the await, a
+    throw would leave the pending badge stuck forever and show nothing. */
+const SERVER_UNREACHABLE_MESSAGE =
+  "Could not reach the server. The page has been refreshed to show the latest status — please try again.";
 
 /**
  * Honest pending display: while a server action is in flight the badges
@@ -215,7 +242,7 @@ export function OrderActionsCard({ orderId }: { orderId: string }) {
 /** Buttons for each allowed next status (cancel has its own form). */
 export function StatusButtons({ orderId }: { orderId: string }) {
   const router = useRouter();
-  const { order, setOrder } = useOptimisticOrder();
+  const { order, setOrder, noteConfirmedMutation } = useOptimisticOrder();
   // While ANY action is in flight all buttons are disabled — overlapping
   // mutations would race the pending state and the refresh reconciliation.
   const pending = order.pending;
@@ -252,12 +279,24 @@ export function StatusButtons({ orderId }: { orderId: string }) {
                     toStatus === "confirmed" ? true : undefined,
                 },
               }));
-              const result = await advanceOrderStatus(orderId, toStatus);
+              let result: Awaited<ReturnType<typeof advanceOrderStatus>>;
+              try {
+                result = await advanceOrderStatus(orderId, toStatus);
+              } catch {
+                // The action threw (network / timeout) instead of
+                // returning { ok: false }: surface it and reconcile.
+                handleOrderActionFailure(
+                  setOrder,
+                  router,
+                  SERVER_UNREACHABLE_MESSAGE
+                );
+                return;
+              }
               if (!result.ok) {
                 // Nothing final was ever shown, so there is nothing to
-                // revert — just clear the pending state and say so.
-                setOrder((s) => ({ ...s, pending: null }));
-                toast.error(result.error);
+                // revert — just clear the pending state, say so LOUDLY,
+                // and refresh so the UI reconciles with server truth.
+                handleOrderActionFailure(setOrder, router, result.error);
                 return;
               }
               setOrder((s) => ({
@@ -267,6 +306,7 @@ export function StatusButtons({ orderId }: { orderId: string }) {
                   toStatus === "confirmed" ? true : s.stockDeducted,
                 pending: null,
               }));
+              noteConfirmedMutation();
               toast.success(
                 `Order moved to ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`
               );
@@ -290,15 +330,21 @@ export function StatusButtons({ orderId }: { orderId: string }) {
 
 export function CancelOrderButton({ orderId }: { orderId: string }) {
   const router = useRouter();
-  const { order, setOrder } = useOptimisticOrder();
+  const { order, setOrder, noteConfirmedMutation } = useOptimisticOrder();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  // Inline error, shown inside the dialog as well as in a toast: the
+  // toast alone is easy to miss, and the dialog stays open after a
+  // failure — the admin must see WHY it failed (e.g. "This order is
+  // already cancelled.").
+  const [error, setError] = useState<string | null>(null);
   const pending = order.pending;
   const isCancelling = pending?.kind === "cancel";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (order.pending) return;
+    setError(null);
     const formData = new FormData();
     formData.set("reason", reason);
     // Same rules the server applies in cancelOrder, but only as the
@@ -324,11 +370,26 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
         targetPaymentStatus,
       },
     }));
-    const result = await cancelOrder(orderId, formData);
+    let result: Awaited<ReturnType<typeof cancelOrder>>;
+    try {
+      result = await cancelOrder(orderId, formData);
+    } catch {
+      setError(SERVER_UNREACHABLE_MESSAGE);
+      handleOrderActionFailure(
+        setOrder,
+        router,
+        SERVER_UNREACHABLE_MESSAGE
+      );
+      return;
+    }
     if (!result.ok) {
-      setOrder((s) => ({ ...s, pending: null }));
-      toast.error(result.error);
-      return; // keep the dialog open so the admin can fix and retry
+      // Keep the dialog open so the admin can fix and retry — but say
+      // WHY it failed, inline as well as in a toast, and refresh so the
+      // UI reconciles with server truth (an already-cancelled order
+      // refreshes to show "Cancelled" behind the dialog).
+      setError(result.error);
+      handleOrderActionFailure(setOrder, router, result.error);
+      return;
     }
     setOrder((s) => ({
       ...s,
@@ -337,9 +398,11 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       paymentStatus: targetPaymentStatus ?? s.paymentStatus,
       pending: null,
     }));
+    noteConfirmedMutation();
     toast.success("Order cancelled");
     setOpen(false);
     setReason("");
+    setError(null);
     router.refresh();
   }
 
@@ -364,6 +427,14 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <p
+                role="alert"
+                className="rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700"
+              >
+                {error}
+              </p>
+            )}
             <div className="space-y-2">
               <Label htmlFor="cancel-reason">Cancellation reason</Label>
               <Textarea
@@ -403,7 +474,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
 /** Confirm cash received (COD / Cash at Shop) — the only way COD income is recorded. */
 export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
   const router = useRouter();
-  const { order, setOrder } = useOptimisticOrder();
+  const { order, setOrder, noteConfirmedMutation } = useOptimisticOrder();
   const pending = order.pending;
   const isRecording = pending?.kind === "payment";
 
@@ -417,10 +488,19 @@ export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
           ...s,
           pending: { kind: "payment", label: "Recording payment…" },
         }));
-        const result = await markPaymentReceived(orderId);
+        let result: Awaited<ReturnType<typeof markPaymentReceived>>;
+        try {
+          result = await markPaymentReceived(orderId);
+        } catch {
+          handleOrderActionFailure(
+            setOrder,
+            router,
+            SERVER_UNREACHABLE_MESSAGE
+          );
+          return;
+        }
         if (!result.ok) {
-          setOrder((s) => ({ ...s, pending: null }));
-          toast.error(result.error);
+          handleOrderActionFailure(setOrder, router, result.error);
           return;
         }
         // Only now, with the server's confirmation in hand, show the
@@ -446,6 +526,7 @@ export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
           payments: [optimisticPayment, ...s.payments],
           pending: null,
         }));
+        noteConfirmedMutation();
         toast.success("Payment received and recorded as income");
         router.refresh();
       }}
@@ -467,7 +548,7 @@ export function PaymentVerifyButtons({
   paymentId: string;
 }) {
   const router = useRouter();
-  const { order, setOrder } = useOptimisticOrder();
+  const { order, setOrder, noteConfirmedMutation } = useOptimisticOrder();
   const pending = order.pending;
   const isThisPayment =
     pending?.targetPaymentId === paymentId &&
@@ -490,10 +571,23 @@ export function PaymentVerifyButtons({
         targetPaymentId: paymentId,
       },
     }));
-    const result = await action(orderId, paymentId);
+    let result: { ok: boolean; error?: string };
+    try {
+      result = await action(orderId, paymentId);
+    } catch {
+      handleOrderActionFailure(
+        setOrder,
+        router,
+        SERVER_UNREACHABLE_MESSAGE
+      );
+      return;
+    }
     if (!result.ok) {
-      setOrder((s) => ({ ...s, pending: null }));
-      toast.error(result.error ?? "Could not update the payment.");
+      handleOrderActionFailure(
+        setOrder,
+        router,
+        result.error ?? "Could not update the payment."
+      );
       return;
     }
     // Apply the flip only after the server confirms it.
@@ -523,6 +617,7 @@ export function PaymentVerifyButtons({
         pending: null,
       };
     });
+    noteConfirmedMutation();
     toast.success(successMessage);
     router.refresh();
   }
@@ -665,9 +760,17 @@ export function NoteForm({ orderId }: { orderId: string }) {
     const formData = new FormData();
     formData.set("note", note);
     startTransition(async () => {
-      const result = await addInternalNote(orderId, formData);
+      let result: Awaited<ReturnType<typeof addInternalNote>>;
+      try {
+        result = await addInternalNote(orderId, formData);
+      } catch {
+        toast.error(SERVER_UNREACHABLE_MESSAGE, { duration: 8000 });
+        router.refresh();
+        return;
+      }
       if (!result.ok) {
-        toast.error(result.error);
+        toast.error(result.error, { duration: 8000 });
+        router.refresh();
         return;
       }
       toast.success("Note added");
@@ -723,9 +826,17 @@ export function DeliveryForm({
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     startTransition(async () => {
-      const result = await updateDeliveryInfo(orderId, formData);
+      let result: Awaited<ReturnType<typeof updateDeliveryInfo>>;
+      try {
+        result = await updateDeliveryInfo(orderId, formData);
+      } catch {
+        toast.error(SERVER_UNREACHABLE_MESSAGE, { duration: 8000 });
+        router.refresh();
+        return;
+      }
       if (!result.ok) {
-        toast.error(result.error);
+        toast.error(result.error, { duration: 8000 });
+        router.refresh();
         return;
       }
       toast.success("Delivery details updated");
