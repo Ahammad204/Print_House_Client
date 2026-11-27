@@ -49,12 +49,17 @@ import { useRouter } from "next/navigation";
  * only after the server confirmed it) was overwritten by the stale
  * snapshot and the UI "reverted" to Confirmed. The effect is now
  * version-aware: every snapshot carries the order's server `updatedAt`,
- * and handlers stamp the client time of each server-confirmed mutation.
- * A snapshot whose `updatedAt` clearly predates the last confirmed
- * mutation is a stale payload — it is NOT adopted; instead the provider
- * re-fetches (bounded) until a fresh snapshot arrives. Snapshots at or
- * after the mutation are server truth and are adopted, so later changes
- * (e.g. from another admin) still flow in.
+ * and handlers stamp the client time — and the pre-mutation status — of
+ * each server-confirmed mutation. A snapshot that still shows the
+ * pre-mutation status with an `updatedAt` predating the mutation is a
+ * stale payload — it is NOT adopted; instead the provider re-fetches
+ * (bounded) until a fresh snapshot arrives. The status half of the check
+ * is the decisive one: the status flip and its history row commit in one
+ * transaction, so a snapshot showing the new status necessarily carries
+ * the fresh timeline/invoice too, even when its `updatedAt` looks old
+ * because the admin's device clock runs ahead of the database. Snapshots
+ * at or after the mutation are server truth and are adopted, so later
+ * changes (e.g. from another admin) still flow in.
  *
  * Presentation only: every action still runs its server action and the
  * real stock / accounting / timeline changes happen there.
@@ -116,12 +121,15 @@ type OptimisticOrderContextValue = {
     React.SetStateAction<OptimisticOrderSnapshot>
   >;
   /**
-   * Stamp "a server action just confirmed a final state" (client time).
-   * Call it in the same tick as the setOrder that applies the final
-   * state, before router.refresh(). The sync effect uses the stamp to
-   * reject snapshots that predate the mutation.
+   * Stamp "a server action just confirmed a final state" (client time),
+   * together with the status the order had BEFORE the action. Call it in
+   * the same tick as the setOrder that applies the final state, before
+   * router.refresh(). The sync effect uses the stamp to reject snapshots
+   * that predate the mutation. `fromStatus` is null for actions that
+   * don't change the order status (payment actions); the effect then
+   * falls back to the timestamp check alone.
    */
-  noteConfirmedMutation: () => void;
+  noteConfirmedMutation: (fromStatus: string | null) => void;
 };
 
 const OptimisticOrderContext =
@@ -155,19 +163,31 @@ export function OrderOptimisticProvider({
   const router = useRouter();
 
   // Client timestamp (ms) of the last final state applied from a
-  // server-confirmed action. A server action only returns { ok: true }
-  // AFTER its transaction commits, so any server snapshot whose
-  // `updatedAt` predates this stamp (beyond clock-skew tolerance) is a
-  // stale RSC payload — it must not overwrite the confirmed local state.
+  // server-confirmed action, plus the status the order had before it.
+  // A server action only returns { ok: true } AFTER its transaction
+  // commits, so any server snapshot whose `updatedAt` predates this
+  // stamp (beyond clock-skew tolerance) is a stale RSC payload — it
+  // must not overwrite the confirmed local state. The status is the
+  // stronger signal: the status flip and the history row commit in one
+  // transaction, so a snapshot that still shows the pre-mutation status
+  // is definitively pre-mutation data, whatever the clocks say — and a
+  // snapshot that already shows the new (or a later) status is fresh
+  // even if its `updatedAt` looks old because the admin's device clock
+  // runs ahead of the database clock.
   const lastConfirmedAtRef = useRef<number | null>(null);
+  const lastConfirmedFromStatusRef = useRef<string | null>(null);
   // Bounded re-fetches after a stale snapshot, so a transiently stale
   // refresh converges on server truth instead of looping forever.
   const staleRefreshAttemptsRef = useRef(0);
 
-  const noteConfirmedMutation = useCallback(() => {
-    lastConfirmedAtRef.current = Date.now();
-    staleRefreshAttemptsRef.current = 0;
-  }, []);
+  const noteConfirmedMutation = useCallback(
+    (fromStatus: string | null) => {
+      lastConfirmedAtRef.current = Date.now();
+      lastConfirmedFromStatusRef.current = fromStatus;
+      staleRefreshAttemptsRef.current = 0;
+    },
+    []
+  );
 
   // Reconcile with authoritative server data whenever a refresh brings a
   // new snapshot. Skipped while an action is in flight: the refresh may
@@ -176,35 +196,59 @@ export function OrderOptimisticProvider({
   // retrigger it, so a just-applied final state is never overwritten by
   // the still-stale snapshot before that action's own refresh lands.
   //
-  // Version check: if a final state was applied from a confirmed action
-  // and the incoming snapshot's `updatedAt` is clearly older than that
-  // mutation, the snapshot is stale — keep the confirmed local state and
-  // re-fetch (bounded) so the page converges on server truth, including
-  // the server-rendered timeline and invoice, which only update from a
-  // fresh snapshot. A snapshot at/after the mutation is server truth
-  // and is adopted (it may also carry a later change from another admin).
+  // Stale check: a snapshot is stale when it still shows the status the
+  // order had BEFORE the confirmed mutation AND its `updatedAt` predates
+  // the mutation stamp. The status half is decisive — the flip and the
+  // history row commit atomically, so a snapshot showing the old status
+  // cannot contain the mutation's history entry, whatever the clocks say;
+  // and a snapshot already showing the new (or a later) status is fresh
+  // even when its `updatedAt` looks old because the admin's device clock
+  // runs ahead of the database. For payment-only actions (no status
+  // change) the timestamp check alone applies, as before. A stale
+  // snapshot is NOT adopted; instead the provider re-fetches (bounded)
+  // so the page converges on server truth, including the server-rendered
+  // timeline and invoice, which only update from a fresh snapshot. A
+  // snapshot at/after the mutation is server truth and is adopted (it
+  // may also carry a later change from another admin).
   useEffect(() => {
     if (orderRef.current.pending) return;
     const confirmedAt = lastConfirmedAtRef.current;
     const snapUpdatedAt = Date.parse(snapshot.updatedAt);
     if (confirmedAt !== null && !Number.isNaN(snapUpdatedAt)) {
-      if (snapUpdatedAt < confirmedAt - STALE_SNAPSHOT_TOLERANCE_MS) {
+      const fromStatus = lastConfirmedFromStatusRef.current;
+      // Definitively pre-mutation: still the old status, and the row
+      // was last written before the mutation committed. The strict
+      // timestamp comparison (no tolerance) is safe here because the
+      // status condition already rules out clock-skew false positives:
+      // a fresh snapshot carries the new status.
+      const stillOldStatus =
+        fromStatus !== null && snapshot.status === fromStatus;
+      const timeStale =
+        fromStatus === null
+          ? snapUpdatedAt < confirmedAt - STALE_SNAPSHOT_TOLERANCE_MS
+          : snapUpdatedAt < confirmedAt;
+      if (stillOldStatus && timeStale) {
         if (staleRefreshAttemptsRef.current < MAX_STALE_REFRESHES) {
           staleRefreshAttemptsRef.current += 1;
           router.refresh();
         } else {
-          // Give up re-fetching (e.g. the admin's clock is far off, so
-          // every snapshot looks "stale"): adopt the snapshot rather
-          // than holding local state forever. A manual reload
-          // re-initialises from the server.
+          // Give up re-fetching, but do NOT adopt this snapshot: it is
+          // definitively pre-mutation data, and adopting it would flip
+          // the badge back to the pre-mutation status and strand the
+          // timeline/invoice on stale data with no further retry — the
+          // exact "stale until manual reload" state seen live 27 Nov
+          // after Cancel. Keep the confirmed local state instead; the
+          // stamp is cleared so the next snapshot (from any later
+          // refresh) is adopted unconditionally.
           lastConfirmedAtRef.current = null;
+          lastConfirmedFromStatusRef.current = null;
           staleRefreshAttemptsRef.current = 0;
-          setOrder({ ...snapshot, pending: null });
         }
         return;
       }
       // Snapshot reflects the mutation (or a later change): adopt it.
       lastConfirmedAtRef.current = null;
+      lastConfirmedFromStatusRef.current = null;
       staleRefreshAttemptsRef.current = 0;
     }
     setOrder({ ...snapshot, pending: null });

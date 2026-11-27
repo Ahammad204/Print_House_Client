@@ -147,6 +147,13 @@ export async function markPaymentReceived(
         include: { payments: true },
       });
       if (!order) throw new Error("Order not found.");
+      // A cancelled order must never record income: without this guard
+      // the button was still offered on cancelled COD orders (seen live
+      // 27 Nov on KGP-20261127-0006) and this action would have created
+      // a verified payment + an "Online Order Sales" income row for it.
+      if (order.status === "cancelled") {
+        throw new Error("Cannot record a payment for a cancelled order.");
+      }
       if (
         order.paymentMethod !== "cod" &&
         order.paymentMethod !== "cash_at_shop"
@@ -214,6 +221,12 @@ export async function verifyMobilePayment(
       if (!payment || payment.orderId !== orderId) {
         throw new Error("Payment not found.");
       }
+      // Same guard as markPaymentReceived: verifying a payment on a
+      // cancelled order would record income for an order that no longer
+      // exists as a sale.
+      if (payment.order.status === "cancelled") {
+        throw new Error("Cannot verify a payment for a cancelled order.");
+      }
       if (!(MOBILE_BANKING_METHODS as readonly string[]).includes(payment.method)) {
         throw new Error("Only mobile banking payments can be verified here.");
       }
@@ -262,9 +275,16 @@ export async function rejectMobilePayment(
     await db.$transaction(async (tx) => {
       const payment = await tx.orderPayment.findUnique({
         where: { id: paymentId },
+        include: { order: true },
       });
       if (!payment || payment.orderId !== orderId) {
         throw new Error("Payment not found.");
+      }
+      // No payment change makes sense on a cancelled order, even a
+      // rejection: the order is closed and its payments are settled by
+      // the cancel flow (refunds) or left as-is.
+      if (payment.order.status === "cancelled") {
+        throw new Error("Cannot change a payment for a cancelled order.");
       }
       if (payment.status !== "pending_verification") {
         throw new Error(`This payment is already ${payment.status}.`);

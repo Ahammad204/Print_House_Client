@@ -118,6 +118,37 @@ const SERVER_UNREACHABLE_MESSAGE =
   "Could not reach the server. The page has been refreshed to show the latest status — please try again.";
 
 /**
+ * Shared post-success path for every admin order action (status advance,
+ * cancel, mark payment received, verify/reject). Call it exactly once,
+ * after the final state has been applied from a server-confirmed result:
+ * the mutation is stamped — with the status the order had BEFORE the
+ * action, so the provider's stale-snapshot check knows which snapshots
+ * predate it — a success toast is shown, any extra UI cleanup runs, and
+ * the page is refreshed so the server-rendered timeline and invoice
+ * catch up.
+ *
+ * One call site, not a copy per handler: the cancel path previously had
+ * its own copy of this sequence, so the two could drift apart — and the
+ * timeline/invoice lag seen live 27 Nov after Cancel (while Confirm
+ * caught up on its own) is exactly the kind of drift this prevents.
+ * `fromStatus` is null for actions that don't change the order status
+ * (payment actions); the provider then falls back to the timestamp
+ * check alone.
+ */
+function confirmOrderAction(
+  noteConfirmedMutation: (fromStatus: string | null) => void,
+  router: { refresh(): void },
+  fromStatus: string | null,
+  successMessage: string,
+  after?: () => void
+) {
+  noteConfirmedMutation(fromStatus);
+  toast.success(successMessage);
+  after?.();
+  router.refresh();
+}
+
+/**
  * Honest pending display: while a server action is in flight the badges
  * show the pending label; the final status / payment / stock values only
  * change once the server confirms. The server refresh then reconciles
@@ -207,7 +238,14 @@ export function OrderActionsCard({ orderId }: { orderId: string }) {
   const canCancel = (ALLOWED_TRANSITIONS[order.status] ?? []).includes(
     "cancelled"
   );
+  // Payment actions are never offered on a cancelled order: recording
+  // cash (or verifying a mobile payment) for an order that no longer
+  // exists as a sale would book income against it. Seen live 27 Nov on
+  // KGP-20261127-0006 — the actions card showed only "Mark Payment
+  // Received (৳180.00)" for a cancelled order. The server actions guard
+  // this too; hiding the buttons is the UI half.
   const canMarkReceived =
+    order.status !== "cancelled" &&
     (order.paymentMethod === "cod" ||
       order.paymentMethod === "cash_at_shop") &&
     order.remaining > 0 &&
@@ -306,11 +344,14 @@ export function StatusButtons({ orderId }: { orderId: string }) {
                   toStatus === "confirmed" ? true : s.stockDeducted,
                 pending: null,
               }));
-              noteConfirmedMutation();
-              toast.success(
+              // `order.status` is still the pre-action status here —
+              // setOrder above only schedules the update.
+              confirmOrderAction(
+                noteConfirmedMutation,
+                router,
+                order.status,
                 `Order moved to ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`
               );
-              router.refresh();
             }}
           >
             {isThisAction ? (
@@ -398,12 +439,17 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       paymentStatus: targetPaymentStatus ?? s.paymentStatus,
       pending: null,
     }));
-    noteConfirmedMutation();
-    toast.success("Order cancelled");
-    setOpen(false);
-    setReason("");
-    setError(null);
-    router.refresh();
+    confirmOrderAction(
+      noteConfirmedMutation,
+      router,
+      order.status,
+      "Order cancelled",
+      () => {
+        setOpen(false);
+        setReason("");
+        setError(null);
+      }
+    );
   }
 
   return (
@@ -526,9 +572,14 @@ export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
           payments: [optimisticPayment, ...s.payments],
           pending: null,
         }));
-        noteConfirmedMutation();
-        toast.success("Payment received and recorded as income");
-        router.refresh();
+        // No status change, so fromStatus is null — the provider uses
+        // the timestamp check alone for payment actions.
+        confirmOrderAction(
+          noteConfirmedMutation,
+          router,
+          null,
+          "Payment received and recorded as income"
+        );
       }}
     >
       {isRecording && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
@@ -617,9 +668,7 @@ export function PaymentVerifyButtons({
         pending: null,
       };
     });
-    noteConfirmedMutation();
-    toast.success(successMessage);
-    router.refresh();
+    confirmOrderAction(noteConfirmedMutation, router, null, successMessage);
   }
 
   return (
@@ -666,8 +715,9 @@ export function PaymentsCardContent({ orderId }: { orderId: string }) {
     return (
       <p className="py-4 text-center text-sm text-slate-500">
         No payment records yet.
-        {order.paymentMethod === "cod" ||
-        order.paymentMethod === "cash_at_shop"
+        {order.status !== "cancelled" &&
+        (order.paymentMethod === "cod" ||
+          order.paymentMethod === "cash_at_shop")
           ? " Use “Mark Payment Received” once the cash is in hand."
           : ""}
       </p>
@@ -735,12 +785,18 @@ export function PaymentsCardContent({ orderId }: { orderId: string }) {
                 {formatDateTime(payment.createdAt)}
               </TableCell>
               <TableCell className="text-right">
-                {payment.status === "pending_verification" && (
-                  <PaymentVerifyButtons
-                    orderId={orderId}
-                    paymentId={payment.id}
-                  />
-                )}
+                {/* Verify / reject are never offered on a cancelled
+                    order — the server actions reject them too. A
+                    pending mobile payment on a cancelled order stays
+                    visible as a record, but it can no longer be verified
+                    into income. */}
+                {payment.status === "pending_verification" &&
+                  order.status !== "cancelled" && (
+                    <PaymentVerifyButtons
+                      orderId={orderId}
+                      paymentId={payment.id}
+                    />
+                  )}
               </TableCell>
             </TableRow>
           ))}
