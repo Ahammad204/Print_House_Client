@@ -40,6 +40,8 @@ import {
 } from "@/lib/orders";
 import { cn, formatBDT, formatDateTime } from "@/lib/utils";
 import {
+  paymentPendingLabel,
+  pendingAffectsPayment,
   recomputeOptimisticPaymentStatus,
   useOptimisticOrder,
   type OptimisticPayment,
@@ -80,42 +82,72 @@ const PAYMENT_BADGE_CLASS: Record<string, string> = {
 };
 
 /**
- * Optimistic display: the status + payment badges, stock flag, money
- * figures and payment rows read the optimistic order state, so they flip
- * the moment an action is clicked. The server refresh (keyed on
- * order.updatedAt) reconciles them with the authoritative data afterwards.
+ * Badge for an in-flight action. Deliberately grey + pulsing with a
+ * spinner, so "Cancelling…" can never be mistaken for the final red
+ * "Cancelled" badge. The final state is only shown after the server
+ * action resolves.
+ */
+const PENDING_BADGE_CLASS =
+  "bg-slate-200 text-slate-600 hover:bg-slate-200 animate-pulse";
+
+/**
+ * Honest pending display: while a server action is in flight the badges
+ * show the pending label; the final status / payment / stock values only
+ * change once the server confirms. The server refresh then reconciles
+ * them with the authoritative data.
  */
 export function OrderStatusBadges() {
   const { order } = useOptimisticOrder();
+  const pending = order.pending;
   return (
     <>
-      <Badge
-        className={
-          STATUS_BADGE_CLASS[order.status] ??
-          "bg-slate-100 text-slate-700 hover:bg-slate-100"
-        }
-      >
-        {ORDER_STATUS_LABELS[order.status] ?? order.status}
-      </Badge>
-      <Badge
-        className={
-          PAYMENT_STATUS_BADGE_CLASS[order.paymentStatus] ??
-          "bg-slate-100 text-slate-700 hover:bg-slate-100"
-        }
-      >
-        {PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
-      </Badge>
+      {pending?.targetStatus ? (
+        <Badge className={PENDING_BADGE_CLASS}>
+          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          {pending.label}
+        </Badge>
+      ) : (
+        <Badge
+          className={
+            STATUS_BADGE_CLASS[order.status] ??
+            "bg-slate-100 text-slate-700 hover:bg-slate-100"
+          }
+        >
+          {ORDER_STATUS_LABELS[order.status] ?? order.status}
+        </Badge>
+      )}
+      {pending && pendingAffectsPayment(pending) ? (
+        <Badge className={PENDING_BADGE_CLASS}>
+          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          {paymentPendingLabel(pending)}
+        </Badge>
+      ) : (
+        <Badge
+          className={
+            PAYMENT_STATUS_BADGE_CLASS[order.paymentStatus] ??
+            "bg-slate-100 text-slate-700 hover:bg-slate-100"
+          }
+        >
+          {PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
+        </Badge>
+      )}
     </>
   );
 }
 
 export function StockDeductedValue() {
   const { order } = useOptimisticOrder();
+  if (order.pending?.targetStockDeducted !== undefined) {
+    return <span className="text-slate-500">Updating…</span>;
+  }
   return <>{order.stockDeducted ? "Yes" : "No"}</>;
 }
 
 export function PaymentStatusValue() {
   const { order } = useOptimisticOrder();
+  if (pendingAffectsPayment(order.pending)) {
+    return <span className="text-slate-500">Updating…</span>;
+  }
   return (
     <>{PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}</>
   );
@@ -184,60 +216,74 @@ export function OrderActionsCard({ orderId }: { orderId: string }) {
 export function StatusButtons({ orderId }: { orderId: string }) {
   const router = useRouter();
   const { order, setOrder } = useOptimisticOrder();
-  // Busy only while the server action itself runs. It clears as soon as
-  // the action resolves — the slow router.refresh() afterwards must NOT
-  // keep the button stuck on "Updating…" (the old behaviour).
-  const [busy, setBusy] = useState<string | null>(null);
+  // While ANY action is in flight all buttons are disabled — overlapping
+  // mutations would race the pending state and the refresh reconciliation.
+  const pending = order.pending;
   const nextStatuses = (ALLOWED_TRANSITIONS[order.status] ?? []).filter(
     (s) => s !== "cancelled"
   );
 
   return (
     <div className="flex flex-wrap gap-2">
-      {nextStatuses.map((toStatus) => (
-        <Button
-          key={toStatus}
-          type="button"
-          disabled={busy !== null}
-          onClick={async () => {
-            if (busy) return;
-            // Optimistic: flip the badge / buttons / stock flag now; the
-            // server refresh reconciles afterwards. Revert on error.
-            const prev = order;
-            setOrder((s) => ({
-              ...s,
-              status: toStatus,
-              stockDeducted:
-                toStatus === "confirmed"
-                  ? true
-                  : toStatus === "cancelled"
-                    ? false
-                    : s.stockDeducted,
-            }));
-            setBusy(toStatus);
-            const result = await advanceOrderStatus(orderId, toStatus);
-            setBusy(null);
-            if (!result.ok) {
-              setOrder(prev);
-              toast.error(result.error);
-              return;
-            }
-            toast.success(
-              `Order moved to ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`
-            );
-            router.refresh();
-          }}
-        >
-          {busy === toStatus ? (
-            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-          ) : (
-            <Check className="mr-1.5 h-4 w-4" />
-          )}
-          {busy === toStatus
-            ? "Updating…"
-            : `Mark as ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`}
-        </Button>
-      ))}
+      {nextStatuses.map((toStatus) => {
+        const isThisAction =
+          pending?.kind === "status" && pending.targetStatus === toStatus;
+        return (
+          <Button
+            key={toStatus}
+            type="button"
+            disabled={pending !== null}
+            onClick={async () => {
+              if (order.pending) return;
+              // Honest pending: the badge shows e.g. "Marking as
+              // Processing…" while the server action runs; the final
+              // state is only applied after the server confirms it. The
+              // old code flipped the badge to the final state first — a
+              // reload mid-flight then showed a success the server never
+              // recorded.
+              const label = `Marking as ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}…`;
+              setOrder((s) => ({
+                ...s,
+                pending: {
+                  kind: "status",
+                  label,
+                  targetStatus: toStatus,
+                  targetStockDeducted:
+                    toStatus === "confirmed" ? true : undefined,
+                },
+              }));
+              const result = await advanceOrderStatus(orderId, toStatus);
+              if (!result.ok) {
+                // Nothing final was ever shown, so there is nothing to
+                // revert — just clear the pending state and say so.
+                setOrder((s) => ({ ...s, pending: null }));
+                toast.error(result.error);
+                return;
+              }
+              setOrder((s) => ({
+                ...s,
+                status: toStatus,
+                stockDeducted:
+                  toStatus === "confirmed" ? true : s.stockDeducted,
+                pending: null,
+              }));
+              toast.success(
+                `Order moved to ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`
+              );
+              router.refresh();
+            }}
+          >
+            {isThisAction ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="mr-1.5 h-4 w-4" />
+            )}
+            {isThisAction
+              ? pending.label
+              : `Mark as ${ORDER_STATUS_LABELS[toStatus] ?? toStatus}`}
+          </Button>
+        );
+      })}
     </div>
   );
 }
@@ -247,37 +293,50 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
   const { order, setOrder } = useOptimisticOrder();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
-  const [isPending, setIsPending] = useState(false);
+  const pending = order.pending;
+  const isCancelling = pending?.kind === "cancel";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (order.pending) return;
     const formData = new FormData();
     formData.set("reason", reason);
-    const prev = order;
-    // Optimistic: cancelled badge, stock restored, refund status — the
-    // same rules the server applies in cancelOrder.
+    // Same rules the server applies in cancelOrder, but only as the
+    // pending target — the final state is applied after the server
+    // confirms. A reload mid-flight shows the server truth, never a
+    // "Cancelled" badge the server never recorded.
     const verifiedTotal = order.payments
       .filter((p) => p.status === "verified")
       .reduce((s, p) => s + p.amount, 0);
+    const targetPaymentStatus =
+      verifiedTotal > 0
+        ? verifiedTotal >= order.total
+          ? "refunded"
+          : "partially_refunded"
+        : undefined;
+    setOrder((s) => ({
+      ...s,
+      pending: {
+        kind: "cancel",
+        label: "Cancelling…",
+        targetStatus: "cancelled",
+        targetStockDeducted: false,
+        targetPaymentStatus,
+      },
+    }));
+    const result = await cancelOrder(orderId, formData);
+    if (!result.ok) {
+      setOrder((s) => ({ ...s, pending: null }));
+      toast.error(result.error);
+      return; // keep the dialog open so the admin can fix and retry
+    }
     setOrder((s) => ({
       ...s,
       status: "cancelled",
       stockDeducted: false,
-      paymentStatus:
-        verifiedTotal > 0
-          ? verifiedTotal >= s.total
-            ? "refunded"
-            : "partially_refunded"
-          : s.paymentStatus,
+      paymentStatus: targetPaymentStatus ?? s.paymentStatus,
+      pending: null,
     }));
-    setIsPending(true);
-    const result = await cancelOrder(orderId, formData);
-    setIsPending(false);
-    if (!result.ok) {
-      setOrder(prev);
-      toast.error(result.error);
-      return;
-    }
     toast.success("Order cancelled");
     setOpen(false);
     setReason("");
@@ -289,6 +348,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       <Button
         type="button"
         variant="destructive"
+        disabled={pending !== null}
         onClick={() => setOpen(true)}
       >
         <X className="mr-1.5 h-4 w-4" />
@@ -322,8 +382,15 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
               >
                 Keep Order
               </Button>
-              <Button type="submit" variant="destructive" disabled={isPending}>
-                {isPending ? "Cancelling..." : "Cancel Order"}
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={pending !== null}
+              >
+                {isCancelling && (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                )}
+                {isCancelling ? "Cancelling…" : "Cancel Order"}
               </Button>
             </DialogFooter>
           </form>
@@ -337,17 +404,28 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
 export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
   const router = useRouter();
   const { order, setOrder } = useOptimisticOrder();
-  const [isPending, setIsPending] = useState(false);
+  const pending = order.pending;
+  const isRecording = pending?.kind === "payment";
 
   return (
     <Button
       type="button"
-      disabled={isPending}
+      disabled={pending !== null}
       onClick={async () => {
-        if (isPending) return;
-        const prev = order;
-        // Optimistic: paid badge, remaining 0, and a provisional payment
-        // row (replaced by the real record when the refresh lands).
+        if (order.pending) return;
+        setOrder((s) => ({
+          ...s,
+          pending: { kind: "payment", label: "Recording payment…" },
+        }));
+        const result = await markPaymentReceived(orderId);
+        if (!result.ok) {
+          setOrder((s) => ({ ...s, pending: null }));
+          toast.error(result.error);
+          return;
+        }
+        // Only now, with the server's confirmation in hand, show the
+        // paid state and the provisional payment row (replaced by the
+        // real record when the refresh lands).
         const optimisticPayment: OptimisticPayment = {
           id: `optimistic-${Date.now()}`,
           method: order.paymentMethod,
@@ -366,21 +444,15 @@ export function MarkPaymentReceivedButton({ orderId }: { orderId: string }) {
           remaining: 0,
           verifiedPaid: s.total,
           payments: [optimisticPayment, ...s.payments],
+          pending: null,
         }));
-        setIsPending(true);
-        const result = await markPaymentReceived(orderId);
-        setIsPending(false);
-        if (!result.ok) {
-          setOrder(prev);
-          toast.error(result.error);
-          return;
-        }
         toast.success("Payment received and recorded as income");
         router.refresh();
       }}
     >
-      {isPending
-        ? "Recording..."
+      {isRecording && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+      {isRecording
+        ? "Recording…"
         : `Mark Payment Received (${formatBDT(order.remaining)})`}
     </Button>
   );
@@ -396,46 +468,61 @@ export function PaymentVerifyButtons({
 }) {
   const router = useRouter();
   const { order, setOrder } = useOptimisticOrder();
-  const [isPending, setIsPending] = useState(false);
+  const pending = order.pending;
+  const isThisPayment =
+    pending?.targetPaymentId === paymentId &&
+    (pending.kind === "verify" || pending.kind === "reject");
 
   async function run(
     action: (orderId: string, paymentId: string) => Promise<{ ok: boolean; error?: string }>,
     toStatus: "verified" | "rejected",
     successMessage: string
   ) {
-    if (isPending) return;
-    const prev = order;
-    const payments = order.payments.map((p) =>
-      p.id === paymentId
-        ? {
-            ...p,
-            status: toStatus,
-            verifiedBy: toStatus === "verified" ? "Admin" : p.verifiedBy,
-            verifiedAt:
-              toStatus === "verified"
-                ? new Date().toISOString()
-                : p.verifiedAt,
-          }
-        : p
-    );
-    const verifiedPaid = payments
-      .filter((p) => p.status === "verified")
-      .reduce((s, p) => s + p.amount, 0);
+    if (order.pending) return;
     setOrder((s) => ({
       ...s,
-      payments,
-      verifiedPaid,
-      remaining: Math.max(0, s.total - verifiedPaid),
-      paymentStatus: recomputeOptimisticPaymentStatus(s, payments),
+      pending: {
+        kind: toStatus === "verified" ? "verify" : "reject",
+        label:
+          toStatus === "verified"
+            ? "Verifying payment…"
+            : "Rejecting payment…",
+        targetPaymentId: paymentId,
+      },
     }));
-    setIsPending(true);
     const result = await action(orderId, paymentId);
-    setIsPending(false);
     if (!result.ok) {
-      setOrder(prev);
+      setOrder((s) => ({ ...s, pending: null }));
       toast.error(result.error ?? "Could not update the payment.");
       return;
     }
+    // Apply the flip only after the server confirms it.
+    setOrder((s) => {
+      const payments = s.payments.map((p) =>
+        p.id === paymentId
+          ? {
+              ...p,
+              status: toStatus,
+              verifiedBy: toStatus === "verified" ? "Admin" : p.verifiedBy,
+              verifiedAt:
+                toStatus === "verified"
+                  ? new Date().toISOString()
+                  : p.verifiedAt,
+            }
+          : p
+      );
+      const verifiedPaid = payments
+        .filter((p) => p.status === "verified")
+        .reduce((s, p) => s + p.amount, 0);
+      return {
+        ...s,
+        payments,
+        verifiedPaid,
+        remaining: Math.max(0, s.total - verifiedPaid),
+        paymentStatus: recomputeOptimisticPaymentStatus(s, payments),
+        pending: null,
+      };
+    });
     toast.success(successMessage);
     router.refresh();
   }
@@ -445,12 +532,16 @@ export function PaymentVerifyButtons({
       <Button
         type="button"
         size="sm"
-        disabled={isPending}
+        disabled={pending !== null}
         onClick={() =>
           run(verifyMobilePayment, "verified", "Payment verified and recorded as income")
         }
       >
-        <Check className="mr-1 h-3.5 w-3.5" />
+        {isThisPayment ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Check className="mr-1 h-3.5 w-3.5" />
+        )}
         Verify
       </Button>
       <Button
@@ -458,10 +549,14 @@ export function PaymentVerifyButtons({
         size="sm"
         variant="outline"
         className="text-red-600 hover:bg-red-50"
-        disabled={isPending}
+        disabled={pending !== null}
         onClick={() => run(rejectMobilePayment, "rejected", "Payment rejected")}
       >
-        <X className="mr-1 h-3.5 w-3.5" />
+        {isThisPayment ? (
+          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <X className="mr-1 h-3.5 w-3.5" />
+        )}
         Reject
       </Button>
     </div>
@@ -513,18 +608,25 @@ export function PaymentsCardContent({ orderId }: { orderId: string }) {
               </TableCell>
               <TableCell>{payment.senderPhone ?? "—"}</TableCell>
               <TableCell>
-                <Badge
-                  className={
-                    PAYMENT_BADGE_CLASS[payment.status] ??
-                    "bg-slate-100 text-slate-700 hover:bg-slate-100"
-                  }
-                >
-                  {payment.status === "pending_verification"
-                    ? "Pending Verification"
-                    : payment.status === "verified"
-                      ? "Verified"
-                      : "Rejected"}
-                </Badge>
+                {order.pending?.targetPaymentId === payment.id ? (
+                  <Badge className={PENDING_BADGE_CLASS}>
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                    {order.pending.label}
+                  </Badge>
+                ) : (
+                  <Badge
+                    className={
+                      PAYMENT_BADGE_CLASS[payment.status] ??
+                      "bg-slate-100 text-slate-700 hover:bg-slate-100"
+                    }
+                  >
+                    {payment.status === "pending_verification"
+                      ? "Pending Verification"
+                      : payment.status === "verified"
+                        ? "Verified"
+                        : "Rejected"}
+                  </Badge>
+                )}
               </TableCell>
               <TableCell>
                 {payment.verifiedBy ?? "—"}

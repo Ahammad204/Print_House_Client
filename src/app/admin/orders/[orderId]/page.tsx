@@ -88,9 +88,10 @@ export default async function AdminOrderDetailPage({
     order.status === "pending" || order.status === "confirmed";
 
   // Optimistic state for the admin actions (see optimistic-order.tsx).
-  // The provider is keyed by updatedAt, so whenever the server refresh
-  // brings changed data it remounts with the authoritative order and the
-  // optimistic state is reconciled.
+  // The provider is keyed by the STABLE order id and reconciles server
+  // data via an effect in the provider — it must NOT remount on refresh:
+  // the old key={order.updatedAt} destroyed all client state inside it
+  // (e.g. an open cancel dialog) whenever a slow refresh landed.
   const optimisticSnapshot: OptimisticOrderSnapshot = {
     id: order.id,
     status: order.status,
@@ -100,6 +101,7 @@ export default async function AdminOrderDetailPage({
     total,
     verifiedPaid,
     remaining,
+    pending: null,
     payments: order.payments.map((p) => ({
       id: p.id,
       method: p.method,
@@ -162,10 +164,7 @@ export default async function AdminOrderDetailPage({
 
   return (
     <div className="space-y-6">
-      <OrderOptimisticProvider
-        key={order.updatedAt.toISOString()}
-        snapshot={optimisticSnapshot}
-      >
+      <OrderOptimisticProvider key={order.id} snapshot={optimisticSnapshot}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -207,8 +206,10 @@ export default async function AdminOrderDetailPage({
         </div>
       </div>
 
-      {/* Admin actions — badge, buttons and stock flag update
-          optimistically; see OrderActionsCard / optimistic-order.tsx. */}
+      {/* Admin actions — while an action runs the badges show an honest
+          pending state ("Cancelling…"); the final state is only applied
+          once the server confirms. See OrderActionsCard /
+          optimistic-order.tsx. */}
       <OrderActionsCard orderId={order.id} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
