@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { Check, ChevronLeft, ChevronRight, ShoppingBag } from "lucide-react";
 import { formatBDT } from "@/lib/utils";
+import { formatDeliveryAddress } from "@/lib/orders";
 import { isValidBdPhone, normalizeBdPhone } from "@/lib/validation";
 import {
   readGuestCart,
@@ -678,7 +679,9 @@ export default function CheckoutForm({
                     {deliveryMethod === "pickup" ? (
                       <>Shop Pickup — {shopAddress}</>
                     ) : (
-                      <>{deliveryName} — {deliveryPhone}<br />{street}{area ? `, ${area}` : ""}{district ? `, ${district}` : ""}{postalCode ? ` (${postalCode})` : ""}</>
+                      // Same shared formatter as order success / tracking /
+                      // admin / invoice, so the full address shows here too.
+                      <>{deliveryName} — {deliveryPhone}<br />{formatDeliveryAddress({ deliveryAddress: street, area, upazila, district, division, postalCode })}</>
                     )}
                   </dd>
                 </div>

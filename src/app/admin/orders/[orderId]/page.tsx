@@ -11,15 +11,12 @@ import {
   toNumber,
 } from "@/lib/utils";
 import {
-  ALLOWED_TRANSITIONS,
   ORDER_INCLUDE,
   ORDER_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
-  PAYMENT_STATUS_LABELS,
   formatDeliveryAddress,
 } from "@/lib/orders";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -39,41 +36,22 @@ import InvoiceDocument from "@/components/orders/InvoiceDocument";
 import InvoiceButtons from "@/components/orders/InvoiceButtons";
 import type { InvoiceOrder, InvoiceShop } from "@/lib/invoice-pdf";
 import {
-  CancelOrderButton,
   DeliveryForm,
-  MarkPaymentReceivedButton,
   NoteForm,
-  PaymentVerifyButtons,
-  StatusButtons,
+  OrderActionsCard,
+  OrderStatusBadges,
+  PaymentStatusValue,
+  PaymentsCardContent,
+  RemainingValue,
+  StockDeductedValue,
+  VerifiedPaidValue,
 } from "./OrderActions";
-import { cn } from "@/lib/utils";
+import {
+  OrderOptimisticProvider,
+  type OptimisticOrderSnapshot,
+} from "./optimistic-order";
 
 export const dynamic = "force-dynamic";
-
-const STATUS_BADGE_CLASS: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-800 hover:bg-amber-100",
-  confirmed: "bg-blue-100 text-blue-800 hover:bg-blue-100",
-  processing: "bg-violet-100 text-violet-800 hover:bg-violet-100",
-  ready: "bg-cyan-100 text-cyan-800 hover:bg-cyan-100",
-  shipped: "bg-indigo-100 text-indigo-800 hover:bg-indigo-100",
-  delivered: "bg-green-100 text-green-800 hover:bg-green-100",
-  cancelled: "bg-red-100 text-red-800 hover:bg-red-100",
-};
-
-const PAYMENT_STATUS_BADGE_CLASS: Record<string, string> = {
-  unpaid: "bg-red-100 text-red-800 hover:bg-red-100",
-  pending_verification: "bg-amber-100 text-amber-800 hover:bg-amber-100",
-  partially_paid: "bg-blue-100 text-blue-800 hover:bg-blue-100",
-  paid: "bg-green-100 text-green-800 hover:bg-green-100",
-  refunded: "bg-slate-200 text-slate-700 hover:bg-slate-200",
-  partially_refunded: "bg-orange-100 text-orange-800 hover:bg-orange-100",
-};
-
-const PAYMENT_BADGE_CLASS: Record<string, string> = {
-  pending_verification: "bg-amber-100 text-amber-800 hover:bg-amber-100",
-  verified: "bg-green-100 text-green-800 hover:bg-green-100",
-  rejected: "bg-red-100 text-red-800 hover:bg-red-100",
-};
 
 function whatsappNumber(phone: string): string {
   const digits = phone.replace(/\D/g, "");
@@ -106,19 +84,34 @@ export default async function AdminOrderDetailPage({
   const total = toNumber(order.total);
   const remaining = Math.max(0, total - verifiedPaid);
 
-  const nextStatuses = (ALLOWED_TRANSITIONS[order.status] ?? []).filter(
-    (s) => s !== "cancelled"
-  );
-  const canCancel = (ALLOWED_TRANSITIONS[order.status] ?? []).includes(
-    "cancelled"
-  );
   const canEditDelivery =
     order.status === "pending" || order.status === "confirmed";
-  const canMarkReceived =
-    (order.paymentMethod === "cod" || order.paymentMethod === "cash_at_shop") &&
-    remaining > 0 &&
-    order.paymentStatus !== "refunded" &&
-    order.paymentStatus !== "partially_refunded";
+
+  // Optimistic state for the admin actions (see optimistic-order.tsx).
+  // The provider is keyed by updatedAt, so whenever the server refresh
+  // brings changed data it remounts with the authoritative order and the
+  // optimistic state is reconciled.
+  const optimisticSnapshot: OptimisticOrderSnapshot = {
+    id: order.id,
+    status: order.status,
+    paymentStatus: order.paymentStatus,
+    stockDeducted: order.stockDeducted,
+    paymentMethod: order.paymentMethod,
+    total,
+    verifiedPaid,
+    remaining,
+    payments: order.payments.map((p) => ({
+      id: p.id,
+      method: p.method,
+      amount: toNumber(p.amount),
+      trxId: p.trxId,
+      senderPhone: p.senderPhone,
+      status: p.status,
+      verifiedBy: p.verifiedBy,
+      verifiedAt: p.verifiedAt ? p.verifiedAt.toISOString() : null,
+      createdAt: p.createdAt.toISOString(),
+    })),
+  };
 
   // One shared formatter (see lib/orders.ts) — same string as tracking,
   // the order success page and the invoice.
@@ -169,28 +162,17 @@ export default async function AdminOrderDetailPage({
 
   return (
     <div className="space-y-6">
+      <OrderOptimisticProvider
+        key={order.updatedAt.toISOString()}
+        snapshot={optimisticSnapshot}
+      >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold text-navy">
               Order {order.orderNumber}
             </h1>
-            <Badge
-              className={
-                STATUS_BADGE_CLASS[order.status] ??
-                "bg-slate-100 text-slate-700 hover:bg-slate-100"
-              }
-            >
-              {ORDER_STATUS_LABELS[order.status] ?? order.status}
-            </Badge>
-            <Badge
-              className={
-                PAYMENT_STATUS_BADGE_CLASS[order.paymentStatus] ??
-                "bg-slate-100 text-slate-700 hover:bg-slate-100"
-              }
-            >
-              {PAYMENT_STATUS_LABELS[order.paymentStatus] ?? order.paymentStatus}
-            </Badge>
+            <OrderStatusBadges />
           </div>
           <p className="mt-1 text-sm text-slate-500">
             Placed {formatDateTime(order.createdAt)}
@@ -225,31 +207,9 @@ export default async function AdminOrderDetailPage({
         </div>
       </div>
 
-      {/* Admin actions */}
-      {(nextStatuses.length > 0 || canCancel || canMarkReceived) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Order Actions</CardTitle>
-            <CardDescription>
-              Confirming an order deducts stock; cancelling restores it.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {nextStatuses.length > 0 && (
-              <StatusButtons orderId={order.id} nextStatuses={nextStatuses} />
-            )}
-            <div className="flex flex-wrap gap-2">
-              {canMarkReceived && (
-                <MarkPaymentReceivedButton
-                  orderId={order.id}
-                  remaining={remaining}
-                />
-              )}
-              {canCancel && <CancelOrderButton orderId={order.id} />}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Admin actions — badge, buttons and stock flag update
+          optimistically; see OrderActionsCard / optimistic-order.tsx. */}
+      <OrderActionsCard orderId={order.id} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Order info */}
@@ -273,8 +233,7 @@ export default async function AdminOrderDetailPage({
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Payment Status</dt>
                 <dd className="font-medium">
-                  {PAYMENT_STATUS_LABELS[order.paymentStatus] ??
-                    order.paymentStatus}
+                  <PaymentStatusValue />
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
@@ -308,7 +267,7 @@ export default async function AdminOrderDetailPage({
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Stock Deducted</dt>
                 <dd className="font-medium">
-                  {order.stockDeducted ? "Yes" : "No"}
+                  <StockDeductedValue />
                 </dd>
               </div>
             </dl>
@@ -411,18 +370,13 @@ export default async function AdminOrderDetailPage({
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Verified Paid</dt>
                 <dd className="font-medium text-green-600">
-                  {formatBDT(verifiedPaid)}
+                  <VerifiedPaidValue />
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Remaining</dt>
-                <dd
-                  className={cn(
-                    "font-medium",
-                    remaining > 0 ? "text-red-600" : "text-green-600"
-                  )}
-                >
-                  {formatBDT(remaining)}
+                <dd className="font-medium">
+                  <RemainingValue />
                 </dd>
               </div>
             </dl>
@@ -485,83 +439,11 @@ export default async function AdminOrderDetailPage({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {order.payments.length === 0 ? (
-            <p className="py-4 text-center text-sm text-slate-500">
-              No payment records yet.
-              {order.paymentMethod === "cod" ||
-              order.paymentMethod === "cash_at_shop"
-                ? " Use “Mark Payment Received” once the cash is in hand."
-                : ""}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Method</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead>TrxID</TableHead>
-                    <TableHead>Sender Phone</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Verified By</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {order.payments.map((payment) => (
-                    <TableRow key={payment.id}>
-                      <TableCell className="whitespace-nowrap">
-                        {PAYMENT_METHOD_LABELS[payment.method] ?? payment.method}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatBDT(payment.amount)}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {payment.trxId ?? "—"}
-                      </TableCell>
-                      <TableCell>{payment.senderPhone ?? "—"}</TableCell>
-                      <TableCell>
-                        <Badge
-                          className={
-                            PAYMENT_BADGE_CLASS[payment.status] ??
-                            "bg-slate-100 text-slate-700 hover:bg-slate-100"
-                          }
-                        >
-                          {payment.status === "pending_verification"
-                            ? "Pending Verification"
-                            : payment.status === "verified"
-                              ? "Verified"
-                              : "Rejected"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {payment.verifiedBy ?? "—"}
-                        {payment.verifiedAt && (
-                          <div className="text-xs text-slate-500">
-                            {formatDateTime(payment.verifiedAt)}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {formatDateTime(payment.createdAt)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {payment.status === "pending_verification" && (
-                          <PaymentVerifyButtons
-                            orderId={order.id}
-                            paymentId={payment.id}
-                          />
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <PaymentsCardContent orderId={order.id} />
         </CardContent>
       </Card>
+
+      </OrderOptimisticProvider>
 
       {/* Timeline */}
       <Card>
