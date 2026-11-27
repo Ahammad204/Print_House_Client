@@ -191,3 +191,62 @@ Notes for production:
 - All data pages are `force-dynamic`, so `next build` never touches the database.
   If the database is unreachable at runtime, the public site falls back to the
   built-in default settings instead of crashing.
+
+## Customer accounts & e-commerce (added 27 Nov 2026)
+
+The site is now a complete online shop. No new environment variables are
+needed — customer sessions reuse `JWT_SECRET` (separate `customer_session`
+cookie, separate from the `admin_session` cookie).
+
+**Customer routes:** `/register`, `/login`, `/forgot-password`,
+`/reset-password`, `/cart`, `/checkout`, `/order-success/[orderNumber]`,
+`/track-order`, `/account` (dashboard), `/account/profile`,
+`/account/addresses`, `/account/orders`, `/account/orders/[orderId]`.
+Guest checkout works without an account; guests track orders with order
+number + phone. Logged-in customers get a database cart (guest localStorage
+carts merge into it on login), saved addresses, order history and reorder.
+
+**Admin routes:** `/admin/orders` (+ `/admin/orders/[orderId]`),
+`/admin/customers` (+ `/admin/customers/[customerId]`),
+`/admin/inventory`, `/admin/settings/orders`.
+
+**Order flow:** Pending → Confirmed → Processing → Ready for Pickup /
+Shipped → Delivered (Cancelled is terminal). Order numbers are
+`KGP-YYYYMMDD-SEQUENCE` (e.g. `KGP-20261127-0001`), generated server-side.
+Prices, stock and totals are always recalculated server-side — the frontend
+never supplies them.
+
+**Stock:** checked at order time, deducted only when the admin confirms an
+order, restored only when an order is cancelled (both recorded as
+`StockMovement` rows; the `stockDeducted` flag prevents double
+deduct/restore).
+
+**Accounting:** an order is NOT income until payment is confirmed. Verified
+mobile-banking payments and admin-confirmed COD / cash-at-shop payments each
+create exactly one income `AccountTransaction` in the "Online Order Sales"
+category, linked to the order (reference `pay:<paymentId>`). Cancelling a
+paid order records a refund expense ("Order Refunds") — the original income
+row is never deleted.
+
+**Order settings** (Admin → Order Settings, stored in the database):
+online ordering, guest checkout, registration, login, minimum order amount,
+delivery fees (default fee, free-delivery threshold, per-area fees),
+payment methods (COD, cash at shop, bKash, Nagad, Rocket) with payment
+numbers and instructions, processing/delivery time estimates.
+
+**Notifications & password reset:** order status changes create in-app
+notifications (shown on the customer dashboard). There is NO email or SMS
+sender configured: `order.emailNotificationsEnabled`,
+`order.smsNotificationsEnabled` and `order.otpEnabled` are all OFF by
+default and only enable the settings structure. Password reset works with
+single-use, 1-hour tokens — the admin generates a reset link from the
+customer detail page and shares it with the customer directly (e.g. via
+WhatsApp). WhatsApp is click-to-chat links only; no automated sends.
+
+**Migrations:** `prisma/migrations/20261127120000_init` (base tables) and
+`prisma/migrations/20261127134500_ecommerce` (Customer, CustomerAddress,
+Cart/CartItem, Order, OrderItem, OrderPayment, OrderStatusHistory,
+StockMovement, Notification, CustomerResetToken, `Product.lowStockThreshold`,
+`AccountTransaction.orderId`). After deploying, apply the new migration
+against the production database (`npx prisma migrate deploy`) — the
+`_prisma_migrations` bookkeeping row is part of the normal migrate flow.

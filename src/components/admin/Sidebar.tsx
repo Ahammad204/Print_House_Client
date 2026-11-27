@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 import { Toaster } from "react-hot-toast";
 import {
   BarChart3,
+  Boxes,
+  Cog,
   FolderTree,
   Gift,
   LayoutDashboard,
@@ -13,7 +15,9 @@ import {
   Menu,
   Package,
   Settings,
+  ShoppingBag,
   Tags,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
@@ -22,12 +26,16 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
+  { href: "/admin/customers", label: "Customers", icon: Users },
+  { href: "/admin/inventory", label: "Inventory", icon: Boxes },
   { href: "/admin/products", label: "Products", icon: Package },
   { href: "/admin/categories", label: "Categories", icon: FolderTree },
   { href: "/admin/accounts", label: "Daily Accounts", icon: Wallet },
   { href: "/admin/account-categories", label: "Account Categories", icon: Tags },
   { href: "/admin/reports", label: "Reports & Analytics", icon: BarChart3 },
   { href: "/admin/settings", label: "Website Settings", icon: Settings },
+  { href: "/admin/settings/orders", label: "Order Settings", icon: Cog },
 ];
 
 function NavLinks({
@@ -58,6 +66,7 @@ function NavLinks({
           const active =
             pathname === item.href ||
             (item.href !== "/admin/dashboard" &&
+              item.href !== "/admin/settings" &&
               pathname.startsWith(item.href));
           const Icon = item.icon;
           return (

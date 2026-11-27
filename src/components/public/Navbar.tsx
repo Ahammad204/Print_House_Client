@@ -4,8 +4,21 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Gift, Menu, Search, X } from "lucide-react";
+import {
+  ChevronDown,
+  Gift,
+  LayoutDashboard,
+  LogOut,
+  MapPin,
+  Menu,
+  Package,
+  Search,
+  User,
+  X,
+} from "lucide-react";
 import type { PublicCategory, Settings } from "./types";
+import CartBadge from "./CartBadge";
+import { logout } from "@/app/account/actions";
 
 const NAV_LINKS = [
   { label: "Home", href: "/" },
@@ -15,15 +28,25 @@ const NAV_LINKS = [
   { label: "Contact", href: "/#contact" },
 ];
 
+const ACCOUNT_LINKS = [
+  { label: "My Dashboard", href: "/account", icon: LayoutDashboard },
+  { label: "My Orders", href: "/account/orders", icon: Package },
+  { label: "My Profile", href: "/account/profile", icon: User },
+  { label: "Saved Addresses", href: "/account/addresses", icon: MapPin },
+];
+
 export default function Navbar({
   settings,
+  customer,
 }: {
   settings: Settings;
   categories?: PublicCategory[];
+  customer?: { name: string } | null;
 }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [query, setQuery] = useState("");
 
   function submitSearch(e: React.FormEvent) {
@@ -32,6 +55,11 @@ export default function Navbar({
     router.push(q ? `/products?q=${encodeURIComponent(q)}` : "/products");
     setSearchOpen(false);
     setMenuOpen(false);
+  }
+
+  function closeAll() {
+    setMenuOpen(false);
+    setAccountOpen(false);
   }
 
   return (
@@ -68,7 +96,7 @@ export default function Navbar({
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           {searchOpen ? (
             <form onSubmit={submitSearch} className="flex items-center gap-1">
               <input
@@ -105,6 +133,85 @@ export default function Navbar({
               <Search className="h-5 w-5" />
             </button>
           )}
+
+          <CartBadge customer={customer} />
+
+          {customer ? (
+            <div className="relative hidden md:block">
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={accountOpen}
+                onClick={() => setAccountOpen((v) => !v)}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-navy transition hover:bg-slate-100"
+              >
+                <User className="h-5 w-5" />
+                <span className="max-w-28 truncate">{customer.name}</span>
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${accountOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {accountOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close account menu"
+                    className="fixed inset-0 z-10 cursor-default"
+                    onClick={() => setAccountOpen(false)}
+                  />
+                  <div
+                    role="menu"
+                    className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+                  >
+                    <p className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      My Account
+                    </p>
+                    {ACCOUNT_LINKS.map((link) => (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        role="menuitem"
+                        onClick={closeAll}
+                        className="flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-navy transition hover:bg-slate-100"
+                      >
+                        <link.icon className="h-4 w-4 text-slate-400" />
+                        {link.label}
+                      </Link>
+                    ))}
+                    <form
+                      action={logout}
+                      className="border-t border-slate-100"
+                    >
+                      <button
+                        type="submit"
+                        role="menuitem"
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Logout
+                      </button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="hidden items-center gap-1 md:flex">
+              <Link
+                href="/login"
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-navy transition hover:bg-slate-100"
+              >
+                Login
+              </Link>
+              <Link
+                href="/register"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark"
+              >
+                Register
+              </Link>
+            </div>
+          )}
+
           <button
             type="button"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -130,6 +237,51 @@ export default function Navbar({
                 {link.label}
               </Link>
             ))}
+            <div className="my-2 border-t border-slate-100" />
+            {customer ? (
+              <>
+                <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  My Account — {customer.name}
+                </p>
+                {ACCOUNT_LINKS.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-navy transition hover:bg-slate-100"
+                  >
+                    <link.icon className="h-4 w-4 text-slate-400" />
+                    {link.label}
+                  </Link>
+                ))}
+                <form action={logout}>
+                  <button
+                    type="submit"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div className="flex gap-2 px-1 pt-1">
+                <Link
+                  href="/login"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-navy transition hover:bg-slate-100"
+                >
+                  Login
+                </Link>
+                <Link
+                  href="/register"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex-1 rounded-lg bg-primary px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-primary-dark"
+                >
+                  Register
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       )}

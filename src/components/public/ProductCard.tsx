@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { formatBDT } from "@/lib/utils";
 import { effectivePrice, type PublicProduct } from "./types";
+import ProductCardActions from "./ProductCardActions";
 
 function AvailabilityBadge({ status }: { status: string }) {
   if (status === "available") {
@@ -68,6 +69,7 @@ export default function ProductCard({ product }: { product: PublicProduct }) {
         >
           View Details
         </Link>
+        <ProductCardActions product={product} />
       </div>
     </article>
   );

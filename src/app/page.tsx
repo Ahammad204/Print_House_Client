@@ -18,6 +18,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { db as prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { getCustomerSession } from "@/lib/customer-auth";
 import Navbar from "@/components/public/Navbar";
 import Footer from "@/components/public/Footer";
 import HeroSection from "@/components/public/HeroSection";
@@ -61,6 +62,8 @@ function parseServices(raw: string | undefined): ServiceItem[] {
 
 export default async function HomePage() {
   const settings = await getSettings();
+  const customerSession = await getCustomerSession();
+  const customer = customerSession ? { name: customerSession.name } : null;
 
   // Featured categories: admin-chosen order first, else active by `order`.
   const featuredCategoryIds = (settings.featuredCategoryIds || "")
@@ -127,7 +130,7 @@ export default async function HomePage() {
 
   return (
     <>
-      <Navbar settings={settings} categories={categories} />
+      <Navbar settings={settings} categories={categories} customer={customer} />
       <main className="flex-1">
         <HeroSection settings={settings} />
 

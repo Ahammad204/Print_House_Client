@@ -260,10 +260,12 @@ async function main() {
     { name: "Product Sales", type: "income", description: "Income from gift and stationery sales." },
     { name: "Printing Income", type: "income", description: "Income from printing services." },
     { name: "Photocopy Income", type: "income", description: "Income from photocopy services." },
+    { name: "Online Order Sales", type: "income", description: "Income from verified online order payments." },
     { name: "Product Purchase", type: "expense", description: "Buying stock from suppliers." },
     { name: "Shop Rent", type: "expense", description: "Monthly shop rent." },
     { name: "Electricity", type: "expense", description: "Monthly electricity bill." },
     { name: "Transportation", type: "expense", description: "Delivery and transport costs." },
+    { name: "Order Refunds", type: "expense", description: "Refunds for cancelled online orders." },
     { name: "Other Expenses", type: "expense", description: "Miscellaneous shop expenses." },
   ] as const;
 

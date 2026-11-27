@@ -2,6 +2,7 @@ import Link from "next/link";
 import { SearchX } from "lucide-react";
 import { db as prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { getCustomerSession } from "@/lib/customer-auth";
 import Navbar from "@/components/public/Navbar";
 import Footer from "@/components/public/Footer";
 import ProductCard from "@/components/public/ProductCard";
@@ -33,6 +34,8 @@ export default async function ProductsPage({
 }) {
   const params = await searchParams;
   const settings = await getSettings();
+  const customerSession = await getCustomerSession();
+  const customer = customerSession ? { name: customerSession.name } : null;
 
   const q = first(params.q).trim();
   const categorySlug = first(params.category).trim();
@@ -156,7 +159,7 @@ export default async function ProductsPage({
 
   return (
     <>
-      <Navbar settings={settings} categories={footerCategories} />
+      <Navbar settings={settings} categories={footerCategories} customer={customer} />
       <main className="flex-1 bg-surface">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
           <h1 className="text-3xl font-bold text-navy">All Products</h1>

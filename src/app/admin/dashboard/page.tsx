@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Scale,
+  ShoppingBag,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -233,6 +234,41 @@ export default async function AdminDashboardPage() {
     include: { category: true },
   });
 
+  // Order stats.
+  const [
+    ordersTodayCount,
+    pendingOrdersCount,
+    todayOrderValueAgg,
+    pendingOrderValueAgg,
+    orderIncomeAgg,
+  ] = await Promise.all([
+    prisma.order.count({
+      where: { createdAt: { gte: today.start, lt: today.end } },
+    }),
+    prisma.order.count({ where: { status: "pending" } }),
+    prisma.order.aggregate({
+      _sum: { total: true },
+      where: {
+        createdAt: { gte: today.start, lt: today.end },
+        status: { not: "cancelled" },
+      },
+    }),
+    prisma.order.aggregate({
+      _sum: { total: true },
+      where: {
+        status: { not: "cancelled" },
+        paymentStatus: { in: ["unpaid", "pending_verification"] },
+      },
+    }),
+    prisma.accountTransaction.aggregate({
+      _sum: { amount: true },
+      where: { type: "income", orderId: { not: null } },
+    }),
+  ]);
+  const todayOrderValue = toNumber(todayOrderValueAgg._sum.total ?? 0);
+  const pendingOrderValue = toNumber(pendingOrderValueAgg._sum.total ?? 0);
+  const totalOrderIncome = toNumber(orderIncomeAgg._sum.amount ?? 0);
+
   type StatCard = {
     title: string;
     value: number;
@@ -336,6 +372,109 @@ export default async function AdminDashboardPage() {
             </Card>
           );
         })}
+      </div>
+
+      {/* Orders stats */}
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-[#14213D]">Orders</h2>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/orders">View all orders</Link>
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Orders Today
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-[#14213D]">
+                    {ordersTodayCount}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-blue-100 p-2 text-blue-700">
+                  <ShoppingBag className="h-5 w-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Pending Orders
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-[#14213D]">
+                    {pendingOrdersCount}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-amber-100 p-2 text-amber-700">
+                  <ShoppingBag className="h-5 w-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Today&apos;s Order Value
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-green-600">
+                    {formatBDT(todayOrderValue)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-green-100 p-2 text-green-700">
+                  <Wallet className="h-5 w-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Pending Order Value
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-amber-600">
+                    {formatBDT(pendingOrderValue)}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Non-cancelled, unpaid or pending verification
+                  </p>
+                </div>
+                <div className="rounded-lg bg-amber-100 p-2 text-amber-700">
+                  <Wallet className="h-5 w-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Total Received from Orders
+                  </p>
+                  <p className="mt-1 text-2xl font-bold text-green-600">
+                    {formatBDT(totalOrderIncome)}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Verified order payments recorded as income
+                  </p>
+                </div>
+                <div className="rounded-lg bg-green-100 p-2 text-green-700">
+                  <ArrowUpRight className="h-5 w-5" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

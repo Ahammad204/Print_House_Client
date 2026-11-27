@@ -4,11 +4,13 @@ import { notFound } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 import { db as prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
+import { getCustomerSession } from "@/lib/customer-auth";
 import { formatBDT } from "@/lib/utils";
 import Navbar from "@/components/public/Navbar";
 import Footer from "@/components/public/Footer";
 import ProductCard from "@/components/public/ProductCard";
 import ProductGallery from "@/components/public/ProductGallery";
+import ProductActions from "@/components/public/ProductActions";
 import { effectivePrice } from "@/components/public/types";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +43,7 @@ export default async function ProductDetailPage({
 }) {
   const { slug } = await params;
   const settings = await getSettings();
+  const customer = await getCustomerSession();
 
   const product = await prisma.product.findUnique({
     where: { slug },
@@ -91,7 +94,14 @@ export default async function ProductDetailPage({
 
   return (
     <>
-      <Navbar settings={settings} categories={footerCategories} />
+      {/* Navbar contract: { settings, categories?, customer? } — see cart page note. */}
+      <Navbar
+        {...{
+          settings,
+          categories: footerCategories,
+          customer: customer ? { name: customer.name } : null,
+        }}
+      />
       <main className="flex-1 bg-white">
         <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
           <nav aria-label="Breadcrumb" className="text-sm text-slate-500">
@@ -160,6 +170,13 @@ export default async function ProductDetailPage({
               <p className="mt-6 leading-relaxed text-slate-600">
                 {product.description}
               </p>
+
+              <div className="mt-8">
+                <ProductActions
+                  product={product}
+                  isLoggedIn={customer !== null}
+                />
+              </div>
 
               <dl className="mt-8 divide-y divide-slate-200 rounded-xl border border-slate-200">
                 {product.sku && (
