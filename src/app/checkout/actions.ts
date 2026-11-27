@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, LONG_TRANSACTION } from "@/lib/db";
 import { getOrderSettings } from "@/lib/order-settings";
 import { getSettings } from "@/lib/settings";
 import {
@@ -415,12 +415,12 @@ export async function placeOrder(
   try {
     let result: { orderNumber: string; newCustomerId: string | null };
     try {
-      result = await db.$transaction(runTransaction);
+      result = await db.$transaction(runTransaction, LONG_TRANSACTION);
     } catch (e) {
       // Order-number collision (same-day sequence race): retry once with a
       // fresh number. The failed transaction rolled back, so retrying is safe.
       if (isUniqueViolation(e) && uniqueTarget(e).includes("orderNumber")) {
-        result = await db.$transaction(runTransaction);
+        result = await db.$transaction(runTransaction, LONG_TRANSACTION);
       } else {
         throw e;
       }

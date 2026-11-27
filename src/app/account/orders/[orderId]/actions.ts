@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { db } from "@/lib/db";
+import { db, LONG_TRANSACTION } from "@/lib/db";
 import { getCustomerSession } from "@/lib/customer-auth";
 import {
   CUSTOMER_CANCELLABLE_FROM,
@@ -31,7 +31,7 @@ export async function cancelCustomerOrder(orderId: string): Promise<void> {
       session.id,
       "Cancelled by customer",
     );
-  });
+  }, LONG_TRANSACTION);
 
   revalidatePath(`/account/orders/${orderId}`);
   revalidatePath("/account/orders");
