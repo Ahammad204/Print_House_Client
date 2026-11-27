@@ -38,11 +38,12 @@ function dateDaysAgo(days: number): Date {
 
 async function main() {
   // ---- Admin -------------------------------------------------------------
-  const envPassword = process.env.ADMIN_PASSWORD;
-  const adminPassword = envPassword || "Admin@1234";
-  if (!envPassword) {
-    console.warn(
-      "WARNING: ADMIN_PASSWORD is not set — seeding the default admin password (Admin@1234). Change it before going live.",
+  // No default password: fail hard if ADMIN_PASSWORD is unset, so a missed
+  // env var can never silently reset the admin password to a public string.
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    throw new Error(
+      "ADMIN_PASSWORD is not set. Set a strong admin password in your environment before seeding — there is no default password.",
     );
   }
   const passwordHash = await bcrypt.hash(adminPassword, 10);

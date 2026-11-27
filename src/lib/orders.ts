@@ -3,6 +3,19 @@ import { db } from "@/lib/db";
 import { dhakaTodayRange } from "@/lib/utils";
 import type { OrderSettings } from "@/lib/order-settings";
 
+/** Normalise a mobile-banking TrxID for storage and comparison: trim + upper-case. */
+export function normalizeTrxId(trxId: string): string {
+  return trxId.trim().toUpperCase();
+}
+
+/** TrxID format after normalisation: 8–12 letters/digits (bKash 10, Nagad 8, Rocket 10). */
+export const TRX_ID_PATTERN = /^[A-Z0-9]{8,12}$/;
+
+/** Round a Decimal money value once to 2 decimal places (half-up). */
+export function roundMoney(value: Prisma.Decimal): Prisma.Decimal {
+  return value.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+}
+
 // ---------------------------------------------------------------------------
 // Order status machine
 // ---------------------------------------------------------------------------
@@ -111,13 +124,17 @@ export async function generateOrderNumber(
 export function effectiveUnitPrice(product: {
   price: unknown;
   discountPrice?: unknown | null;
-}): number {
-  const price = Number(product.price);
+}): Prisma.Decimal {
+  const price = new Prisma.Decimal(product.price!.toString());
   const discount =
     product.discountPrice === null || product.discountPrice === undefined
       ? null
-      : Number(product.discountPrice);
-  if (discount !== null && !Number.isNaN(discount) && discount > 0 && discount < price) {
+      : new Prisma.Decimal(product.discountPrice!.toString());
+  if (
+    discount !== null &&
+    discount.gt(0) &&
+    discount.lt(price)
+  ) {
     return discount;
   }
   return price;
@@ -130,10 +147,10 @@ export type ValidatedLine = {
   name: string;
   image: string | null;
   sku: string | null;
-  unitPrice: number;
+  unitPrice: Prisma.Decimal;
   quantity: number;
-  discount: number;
-  total: number;
+  discount: Prisma.Decimal;
+  total: Prisma.Decimal;
 };
 
 /**
@@ -144,11 +161,26 @@ export type ValidatedLine = {
 export async function validateCartItems(
   tx: Prisma.TransactionClient,
   items: CartLineInput[],
-): Promise<{ lines: ValidatedLine[]; subtotal: number; discount: number }> {
+): Promise<{
+  lines: ValidatedLine[];
+  subtotal: Prisma.Decimal;
+  discount: Prisma.Decimal;
+}> {
   if (items.length === 0) {
     throw new Error("Your cart is empty.");
   }
-  const ids = [...new Set(items.map((i) => i.productId))];
+  // M7: aggregate duplicate lines for the same product FIRST (sum
+  // quantities), so a crafted [{A,5},{A,5}] cannot pass the per-line
+  // stock check twice against stock of 6.
+  const aggregated = new Map<string, number>();
+  for (const item of items) {
+    const qty = Math.floor(item.quantity);
+    if (!Number.isFinite(qty) || qty < 1) {
+      throw new Error("Invalid quantity in cart.");
+    }
+    aggregated.set(item.productId, (aggregated.get(item.productId) ?? 0) + qty);
+  }
+  const ids = [...aggregated.keys()];
   const products = await tx.product.findMany({
     where: { id: { in: ids } },
     include: { images: { orderBy: { order: "asc" }, take: 1 } },
@@ -156,12 +188,8 @@ export async function validateCartItems(
   const byId = new Map(products.map((p) => [p.id, p]));
 
   const lines: ValidatedLine[] = [];
-  for (const item of items) {
-    const qty = Math.floor(item.quantity);
-    if (!Number.isFinite(qty) || qty < 1) {
-      throw new Error("Invalid quantity in cart.");
-    }
-    const product = byId.get(item.productId);
+  for (const [productId, qty] of aggregated) {
+    const product = byId.get(productId);
     if (!product) {
       throw new Error("A product in your cart is no longer available.");
     }
@@ -173,9 +201,11 @@ export async function validateCartItems(
         `Only ${product.stock} of "${product.name}" left in stock.`,
       );
     }
-    const unitPrice = effectiveUnitPrice(product);
-    const original = Number(product.price);
-    const discount = Math.max(0, original - unitPrice) * qty;
+    const unitPrice = roundMoney(effectiveUnitPrice(product));
+    const original = roundMoney(new Prisma.Decimal(product.price.toString()));
+    const discount = roundMoney(
+      Prisma.Decimal.max(0, original.minus(unitPrice)).times(qty),
+    );
     lines.push({
       productId: product.id,
       name: product.name,
@@ -184,28 +214,38 @@ export async function validateCartItems(
       unitPrice,
       quantity: qty,
       discount,
-      total: unitPrice * qty,
+      total: roundMoney(unitPrice.times(qty)),
     });
   }
-  const subtotal = lines.reduce((s, l) => s + l.total, 0);
-  const discount = lines.reduce((s, l) => s + l.discount, 0);
-  return { lines, subtotal, discount };
+  const subtotal = lines.reduce(
+    (s, l) => s.plus(l.total),
+    new Prisma.Decimal(0),
+  );
+  const discount = lines.reduce(
+    (s, l) => s.plus(l.discount),
+    new Prisma.Decimal(0),
+  );
+  return { lines, subtotal: roundMoney(subtotal), discount: roundMoney(discount) };
 }
 
 /** Delivery fee from settings — never hardcoded. Pickup is always free. */
 export function calculateDeliveryFee(
-  subtotal: number,
+  subtotal: Prisma.Decimal | number,
   deliveryMethod: string,
   area: string | undefined | null,
   district: string | undefined | null,
   settings: OrderSettings,
-): number {
-  if (deliveryMethod === "pickup") return 0;
+): Prisma.Decimal {
+  const subtotalDec =
+    subtotal instanceof Prisma.Decimal
+      ? subtotal
+      : new Prisma.Decimal(subtotal.toString());
+  if (deliveryMethod === "pickup") return new Prisma.Decimal(0);
   if (
     settings.freeDeliveryThreshold > 0 &&
-    subtotal >= settings.freeDeliveryThreshold
+    subtotalDec.gte(new Prisma.Decimal(settings.freeDeliveryThreshold.toString()))
   ) {
-    return 0;
+    return new Prisma.Decimal(0);
   }
   const haystacks = [area, district]
     .filter(Boolean)
@@ -213,10 +253,10 @@ export function calculateDeliveryFee(
   for (const rule of settings.deliveryAreas) {
     const needle = rule.area.trim().toLowerCase();
     if (haystacks.some((h) => h === needle || h.includes(needle) || needle.includes(h))) {
-      return rule.fee;
+      return roundMoney(new Prisma.Decimal(rule.fee.toString()));
     }
   }
-  return settings.defaultDeliveryFee;
+  return roundMoney(new Prisma.Decimal(settings.defaultDeliveryFee.toString()));
 }
 
 /**
@@ -340,38 +380,50 @@ export async function deductStockForOrder(
     include: { items: true },
   });
   if (!order || order.stockDeducted) return;
+  // Atomic claim of the deduction: only the first concurrent confirm flips
+  // stockDeducted false -> true; any loser sees count 0 and returns.
+  const flipped = await tx.order.updateMany({
+    where: { id: order.id, stockDeducted: false },
+    data: { stockDeducted: true },
+  });
+  if (flipped.count === 0) return;
   for (const item of order.items) {
     if (!item.productId) continue;
     const product = await tx.product.findUnique({
       where: { id: item.productId },
     });
     if (!product) continue;
-    if (product.stock < item.quantity) {
+    // Atomic conditional decrement: succeeds only if enough stock remains
+    // at this instant (also backed by the DB CHECK (stock >= 0)).
+    const deducted = await tx.product.updateMany({
+      where: { id: product.id, stock: { gte: item.quantity } },
+      data: { stock: { decrement: item.quantity } },
+    });
+    if (deducted.count === 0) {
+      const fresh = await tx.product.findUnique({
+        where: { id: product.id },
+      });
       throw new Error(
-        `Not enough stock for "${item.name}" (${product.stock} left).`,
+        `Not enough stock for "${item.name}" (${fresh?.stock ?? 0} left).`,
       );
     }
-    const newStock = product.stock - item.quantity;
-    await tx.product.update({
+    // previousStock/newStock from a fresh read inside the same transaction.
+    const after = await tx.product.findUnique({
       where: { id: product.id },
-      data: { stock: newStock },
     });
+    const newStock = after?.stock ?? product.stock - item.quantity;
     await tx.stockMovement.create({
       data: {
         productId: product.id,
         orderId: order.id,
         type: "sale",
         quantity: -item.quantity,
-        previousStock: product.stock,
+        previousStock: newStock + item.quantity,
         newStock,
         reason: `Order ${order.orderNumber} confirmed`,
       },
     });
   }
-  await tx.order.update({
-    where: { id: order.id },
-    data: { stockDeducted: true },
-  });
 }
 
 export async function restoreStockForOrder(
@@ -383,33 +435,40 @@ export async function restoreStockForOrder(
     include: { items: true },
   });
   if (!order || !order.stockDeducted) return;
+  // Atomic claim of the restore: only the first concurrent cancel flips
+  // stockDeducted true -> false; any loser sees count 0 and returns.
+  const flipped = await tx.order.updateMany({
+    where: { id: order.id, stockDeducted: true },
+    data: { stockDeducted: false },
+  });
+  if (flipped.count === 0) return;
   for (const item of order.items) {
     if (!item.productId) continue;
     const product = await tx.product.findUnique({
       where: { id: item.productId },
     });
     if (!product) continue;
-    const newStock = product.stock + item.quantity;
-    await tx.product.update({
+    await tx.product.updateMany({
       where: { id: product.id },
-      data: { stock: newStock },
+      data: { stock: { increment: item.quantity } },
     });
+    // previousStock/newStock from a fresh read inside the same transaction.
+    const after = await tx.product.findUnique({
+      where: { id: product.id },
+    });
+    const newStock = after?.stock ?? product.stock + item.quantity;
     await tx.stockMovement.create({
       data: {
         productId: product.id,
         orderId: order.id,
         type: "cancellation",
         quantity: item.quantity,
-        previousStock: product.stock,
+        previousStock: newStock - item.quantity,
         newStock,
         reason: `Order ${order.orderNumber} cancelled — stock restored`,
       },
     });
   }
-  await tx.order.update({
-    where: { id: order.id },
-    data: { stockDeducted: false },
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -456,13 +515,14 @@ export async function recordOrderIncome(
   payment: { id: string; method: string; amount: Prisma.Decimal | number },
 ): Promise<void> {
   const reference = `pay:${payment.id}`;
-  const existing = await tx.accountTransaction.findFirst({
-    where: { orderId: order.id, reference },
-  });
-  if (existing) return;
   const { incomeId } = await ensureOrderCategories(tx);
-  await tx.accountTransaction.create({
-    data: {
+  // H6: upsert on the @@unique([orderId, reference]) key — the DB, not a
+  // findFirst pre-check, guarantees exactly one income row per payment,
+  // even when two admins act concurrently.
+  await tx.accountTransaction.upsert({
+    where: { orderId_reference: { orderId: order.id, reference } },
+    update: {},
+    create: {
       type: "income",
       amount: new Prisma.Decimal(payment.amount.toString()),
       description: `Online order ${order.orderNumber} — ${PAYMENT_METHOD_LABELS[payment.method] ?? payment.method} payment`,
@@ -483,15 +543,14 @@ export async function recordOrderRefund(
   amount: number,
 ): Promise<void> {
   const reference = `refund:${payment.id}`;
-  const existing = await tx.accountTransaction.findFirst({
-    where: { orderId: order.id, reference },
-  });
-  if (existing) return;
   const { refundId } = await ensureOrderCategories(tx);
-  await tx.accountTransaction.create({
-    data: {
+  // H6: same upsert-on-unique-key pattern as recordOrderIncome.
+  await tx.accountTransaction.upsert({
+    where: { orderId_reference: { orderId: order.id, reference } },
+    update: {},
+    create: {
       type: "expense",
-      amount: new Prisma.Decimal(amount.toFixed(2)),
+      amount: roundMoney(new Prisma.Decimal(amount.toString())),
       description: `Refund for cancelled online order ${order.orderNumber}`,
       date: new Date(),
       paymentMethod: PAYMENT_METHOD_LABELS[payment.method] ?? payment.method,

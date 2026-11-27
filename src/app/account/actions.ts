@@ -1,11 +1,15 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
+  bumpCustomerTokenVersion,
   clearCustomerSession,
+  createCustomerSessionToken,
+  customerSessionCookieOptions,
   getCustomerSession,
   hashPassword,
   verifyPassword,
@@ -22,6 +26,20 @@ import {
 // ---------------------------------------------------------------------------
 
 export async function logout(): Promise<void> {
+  await clearCustomerSession();
+  redirect("/");
+}
+
+/**
+ * Logs the customer out on EVERY device: bumps tokenVersion so all
+ * existing session tokens (including this one) stop validating, then
+ * clears this device's cookie.
+ */
+export async function logoutEverywhere(): Promise<void> {
+  const session = await getCustomerSession();
+  if (session) {
+    await bumpCustomerTokenVersion(session.id);
+  }
   await clearCustomerSession();
   redirect("/");
 }
@@ -192,9 +210,26 @@ export async function changePassword(
     return { error: "Your current password is incorrect." };
   }
 
-  await db.customer.update({
-    where: { id: session.id },
-    data: { password: await hashPassword(parsed.data.newPassword) },
+  await db.$transaction(async (tx) => {
+    // Change the password and bump tokenVersion in one update, so every
+    // other customer session is invalidated immediately, and delete any
+    // unused reset tokens so old links cannot be used after the change.
+    await tx.customer.update({
+      where: { id: session.id },
+      data: {
+        password: await hashPassword(parsed.data.newPassword),
+        tokenVersion: { increment: 1 },
+      },
+    });
+    await tx.customerResetToken.deleteMany({
+      where: { customerId: session.id, usedAt: null },
+    });
   });
+  // Re-issue this session's token (carrying the new version) so the
+  // customer stays signed in on this device.
+  const { token, maxAge } = await createCustomerSessionToken(session.id, false);
+  const { name, ...cookieOptions } = customerSessionCookieOptions(maxAge);
+  const cookieStore = await cookies();
+  cookieStore.set(name, token, cookieOptions);
   return { ok: true, message: "Password changed successfully." };
 }

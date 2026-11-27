@@ -1,8 +1,9 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { getOrderSettings } from "@/lib/order-settings";
 import {
   isValidBdPhone,
@@ -89,6 +90,12 @@ export async function getRegistrationEnabled(): Promise<boolean> {
   return settings.enableRegistration;
 }
 
+async function clientIp(): Promise<string> {
+  const headerStore = await headers();
+  const forwarded = headerStore.get("x-forwarded-for");
+  return forwarded?.split(",")[0]?.trim() || "unknown";
+}
+
 export async function customerRegister(
   _prevState: CustomerRegisterState,
   formData: FormData,
@@ -122,21 +129,30 @@ export async function customerRegister(
     ? parsed.data.email.trim().toLowerCase()
     : null;
 
-  const existingPhone = await db.customer.findUnique({ where: { phone } });
-  if (existingPhone) {
+  // Rate limit: 5 attempts / 10 minutes per phone number, 10 / 10 minutes
+  // per IP — registration is open, so mass account creation must be
+  // throttled like login is.
+  const ip = await clientIp();
+  const byPhone = checkRateLimit(`register:${phone}`, 5, 10 * 60 * 1000);
+  const byIp = checkRateLimit(`register-ip:${ip}`, 10, 10 * 60 * 1000);
+  const blocked = !byPhone.allowed ? byPhone : !byIp.allowed ? byIp : null;
+  if (blocked) {
     return {
-      error:
-        "An account with this phone number already exists. Please log in instead.",
+      error: `Too many registration attempts. Please try again in ${blocked.retryAfterSeconds} seconds.`,
     };
   }
-  if (email) {
-    const existingEmail = await db.customer.findUnique({ where: { email } });
-    if (existingEmail) {
-      return {
-        error:
-          "An account with this email address already exists. Please log in instead.",
-      };
-    }
+
+  // One generic message for either match — never reveal whether the phone
+  // number or the email address is the one already registered.
+  const existingPhone = await db.customer.findUnique({ where: { phone } });
+  const existingEmail = email
+    ? await db.customer.findUnique({ where: { email } })
+    : null;
+  if (existingPhone || existingEmail) {
+    return {
+      error:
+        "An account already exists with these details. Please log in instead.",
+    };
   }
 
   const customer = await db.$transaction(async (tx) => {

@@ -1,10 +1,12 @@
 import { db as prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 import SettingsForm from "./SettingsForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
+  await requireAdmin();
   const [settings, products, categories] = await Promise.all([
     getSettings(),
     prisma.product.findMany({

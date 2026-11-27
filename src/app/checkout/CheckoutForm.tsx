@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -109,6 +109,51 @@ export default function CheckoutForm({
   const [loadingGuest, setLoadingGuest] = useState(!isLoggedIn);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // M21: one idempotency key per checkout attempt, generated when the
+  // checkout session starts and stable across retries of the same
+  // attempt (so a retry after a dropped response replays to the same
+  // order instead of creating a duplicate). Persisted in sessionStorage
+  // so a page reload mid-submit does not start a new attempt with a
+  // fresh key. Regenerated after a successful order, so a later new
+  // order gets a fresh key.
+  const IDEMPOTENCY_KEY_STORAGE = "kgp-checkout-idempotency-key";
+  const idempotencyKeyRef = useRef<string | null>(null);
+  function getIdempotencyKey(): string {
+    if (idempotencyKeyRef.current) return idempotencyKeyRef.current;
+    if (typeof window !== "undefined") {
+      try {
+        const stored = window.sessionStorage.getItem(IDEMPOTENCY_KEY_STORAGE);
+        if (stored) {
+          idempotencyKeyRef.current = stored;
+          return stored;
+        }
+      } catch {
+        // Storage unavailable (private mode, etc.) — fall through to memory.
+      }
+    }
+    const fresh = crypto.randomUUID();
+    idempotencyKeyRef.current = fresh;
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(IDEMPOTENCY_KEY_STORAGE, fresh);
+      } catch {
+        // Ignore — the in-memory key still deduplicates this attempt.
+      }
+    }
+    return fresh;
+  }
+  function regenerateIdempotencyKey(): void {
+    const fresh = crypto.randomUUID();
+    idempotencyKeyRef.current = fresh;
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(IDEMPOTENCY_KEY_STORAGE, fresh);
+      } catch {
+        // Ignore.
+      }
+    }
+  }
 
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
@@ -328,45 +373,56 @@ export default function CheckoutForm({
     }
     setSubmitting(true);
     setFormError(null);
-    const result = await placeOrder({
-      items: isLoggedIn
-        ? undefined
-        : readGuestCart().map((i) => ({
-            productId: i.productId,
-            quantity: i.quantity,
-          })),
-      name: name.trim(),
-      phone: normalizeBdPhone(phone) ?? phone.trim(),
-      email: email.trim() || undefined,
-      deliveryMethod,
-      addressId: addressId === "new" ? null : addressId,
-      deliveryName: deliveryName.trim(),
-      deliveryPhone: normalizeBdPhone(deliveryPhone) ?? deliveryPhone.trim(),
-      street: street.trim() || undefined,
-      division: division.trim() || undefined,
-      district: district.trim() || undefined,
-      upazila: upazila.trim() || undefined,
-      area: area.trim() || undefined,
-      postalCode: postalCode.trim() || undefined,
-      instructions: instructions.trim() || undefined,
-      paymentMethod,
-      trxId: trxId.trim() || undefined,
-      senderPhone: senderPhone.trim() || undefined,
-      notes: notes.trim() || undefined,
-      giftMessage: giftMessage.trim() || undefined,
-      createAccount: !isLoggedIn && createAccount,
-      password: createAccount ? password : undefined,
-      confirmPassword: createAccount ? confirmPassword : undefined,
-    });
-    setSubmitting(false);
-    if ("error" in result) {
-      setFormError(result.error);
-      toast.error(result.error);
-      return;
+    try {
+      const result = await placeOrder({
+        items: isLoggedIn
+          ? undefined
+          : readGuestCart().map((i) => ({
+              productId: i.productId,
+              quantity: i.quantity,
+            })),
+        name: name.trim(),
+        phone: normalizeBdPhone(phone) ?? phone.trim(),
+        email: email.trim() || undefined,
+        deliveryMethod,
+        addressId: addressId === "new" ? null : addressId,
+        deliveryName: deliveryName.trim(),
+        deliveryPhone: normalizeBdPhone(deliveryPhone) ?? deliveryPhone.trim(),
+        street: street.trim() || undefined,
+        division: division.trim() || undefined,
+        district: district.trim() || undefined,
+        upazila: upazila.trim() || undefined,
+        area: area.trim() || undefined,
+        postalCode: postalCode.trim() || undefined,
+        instructions: instructions.trim() || undefined,
+        paymentMethod,
+        trxId: trxId.trim() || undefined,
+        senderPhone: senderPhone.trim() || undefined,
+        notes: notes.trim() || undefined,
+        giftMessage: giftMessage.trim() || undefined,
+        createAccount: !isLoggedIn && createAccount,
+        password: createAccount ? password : undefined,
+        confirmPassword: createAccount ? confirmPassword : undefined,
+        idempotencyKey: getIdempotencyKey(),
+      });
+      if ("error" in result) {
+        setFormError(result.error);
+        toast.error(result.error);
+        return;
+      }
+      // Success: this attempt is done — a later new order must not reuse
+      // its key, or it would replay to this order.
+      regenerateIdempotencyKey();
+      if (!isLoggedIn) clearGuestCart();
+      window.dispatchEvent(new Event("kgp-cart-changed"));
+      router.push(`/order-success/${result.orderNumber}`);
+    } catch {
+      const message = "Could not place your order. Please try again.";
+      setFormError(message);
+      toast.error(message);
+    } finally {
+      setSubmitting(false);
     }
-    if (!isLoggedIn) clearGuestCart();
-    window.dispatchEvent(new Event("kgp-cart-changed"));
-    router.push(`/order-success/${result.orderNumber}`);
   }
 
   if (loadingGuest) {

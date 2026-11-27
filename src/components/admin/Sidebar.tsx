@@ -10,6 +10,7 @@ import {
   Cog,
   FolderTree,
   Gift,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { href: "/admin/reports", label: "Reports & Analytics", icon: BarChart3 },
   { href: "/admin/settings", label: "Website Settings", icon: Settings },
   { href: "/admin/settings/orders", label: "Order Settings", icon: Cog },
+  { href: "/admin/change-password", label: "Change Password", icon: KeyRound },
 ];
 
 function NavLinks({

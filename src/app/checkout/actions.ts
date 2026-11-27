@@ -19,10 +19,13 @@ import {
 } from "@/lib/validation";
 import {
   MOBILE_BANKING_METHODS,
+  TRX_ID_PATTERN,
   addOrderHistory,
   calculateDeliveryFee,
   createNotification,
   generateOrderNumber,
+  normalizeTrxId,
+  roundMoney,
   validateCartItems,
 } from "@/lib/orders";
 import { getDbCartWithItems } from "@/lib/cart";
@@ -54,6 +57,9 @@ const placeOrderSchema = z.object({
   createAccount: z.boolean().optional(),
   password: z.string().optional(),
   confirmPassword: z.string().optional(),
+  // M21: client-generated UUID, one per checkout attempt; replaying the
+  // same key returns the existing order instead of creating a duplicate.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
@@ -147,9 +153,19 @@ export async function placeOrder(
     MOBILE_BANKING_METHODS as readonly string[]
   ).includes(data.paymentMethod);
   let senderPhone: string | null = null;
+  // C1: normalise the TrxID once (trim + upper-case) and validate its
+  // format server-side before anything is written.
+  let normalizedTrxId: string | null = null;
   if (isMobileBanking) {
     if (!data.trxId) {
       return { error: "Transaction ID is required for mobile banking payment." };
+    }
+    normalizedTrxId = normalizeTrxId(data.trxId);
+    if (!TRX_ID_PATTERN.test(normalizedTrxId)) {
+      return {
+        error:
+          "Transaction ID must be 8–12 letters or numbers (for example, a bKash, Nagad or Rocket TrxID).",
+      };
     }
     senderPhone = normalizeBdPhone(data.senderPhone ?? "");
     if (!senderPhone) {
@@ -192,6 +208,38 @@ export async function placeOrder(
     return { error: "Your cart is empty." };
   }
 
+  // M21: idempotency replay — a retried submission with the same key
+  // returns the order that was already created for it.
+  const idempotencyKey = data.idempotencyKey ?? null;
+  if (idempotencyKey) {
+    const existingOrder = await db.order.findUnique({
+      where: { idempotencyKey },
+      select: { orderNumber: true },
+    });
+    if (existingOrder) {
+      return { ok: true, orderNumber: existingOrder.orderNumber };
+    }
+  }
+
+  // C1: reject a TrxID already used (pending verification or verified) on
+  // another order. The same check runs again inside the transaction and
+  // the partial unique index on (method, trxId) is the final backstop.
+  if (isMobileBanking && normalizedTrxId) {
+    const reused = await db.orderPayment.findFirst({
+      where: {
+        method: data.paymentMethod,
+        trxId: normalizedTrxId,
+        status: { in: ["pending_verification", "verified"] },
+      },
+      include: { order: { select: { orderNumber: true } } },
+    });
+    if (reused) {
+      return {
+        error: `This Transaction ID has already been used on order ${reused.order.orderNumber}. Please check the Transaction ID or contact the shop.`,
+      };
+    }
+  }
+
   const shopSettings = await getSettings();
   const deliveryAddress =
     data.deliveryMethod === "pickup"
@@ -202,6 +250,24 @@ export async function placeOrder(
     orderNumber: string;
     newCustomerId: string | null;
   }> {
+    // C1 (inside the transaction, so a race between the pre-check above
+    // and this write is still caught before the payment row is created).
+    if (isMobileBanking && normalizedTrxId) {
+      const reused = await tx.orderPayment.findFirst({
+        where: {
+          method: data.paymentMethod,
+          trxId: normalizedTrxId,
+          status: { in: ["pending_verification", "verified"] },
+        },
+        include: { order: { select: { orderNumber: true } } },
+      });
+      if (reused) {
+        throw new Error(
+          `This Transaction ID has already been used on order ${reused.order.orderNumber}. Please check the Transaction ID or contact the shop.`,
+        );
+      }
+    }
+
     let customerId: string | null = session?.id ?? null;
 
     if (createAccount) {
@@ -223,9 +289,12 @@ export async function placeOrder(
     }
 
     const { lines, subtotal, discount } = await validateCartItems(tx, items);
-    // subtotal here is the effective (after-discount) sum; the stored
-    // "subtotal" is the pre-discount sum so subtotal - discount + fee = total.
-    if (settings.minOrderAmount > 0 && subtotal < settings.minOrderAmount) {
+    // L8: all money from here on is Prisma.Decimal, rounded once to 2dp,
+    // so stored subtotal - discount + deliveryFee = total exactly.
+    if (
+      settings.minOrderAmount > 0 &&
+      subtotal.lt(new Prisma.Decimal(settings.minOrderAmount.toString()))
+    ) {
       throw new Error(
         `Minimum order amount is ${formatBDT(settings.minOrderAmount)}.`,
       );
@@ -237,7 +306,8 @@ export async function placeOrder(
       data.district,
       settings,
     );
-    const total = subtotal + deliveryFee;
+    const storedSubtotal = roundMoney(subtotal.plus(discount));
+    const total = roundMoney(subtotal.plus(deliveryFee));
     const orderNumber = await generateOrderNumber(tx);
 
     const order = await tx.order.create({
@@ -260,12 +330,13 @@ export async function placeOrder(
         paymentMethod: data.paymentMethod,
         paymentStatus: isMobileBanking ? "pending_verification" : "unpaid",
         status: "pending",
-        subtotal: subtotal + discount,
+        subtotal: storedSubtotal,
         discount,
         deliveryFee,
         total,
         notes: data.notes || null,
         giftMessage: data.giftMessage || null,
+        idempotencyKey,
         items: {
           create: lines.map((line) => ({
             productId: line.productId,
@@ -284,7 +355,7 @@ export async function placeOrder(
                 create: {
                   method: data.paymentMethod,
                   amount: total,
-                  trxId: data.trxId!.trim(),
+                  trxId: normalizedTrxId,
                   senderPhone,
                   status: "pending_verification",
                 },
@@ -315,6 +386,30 @@ export async function placeOrder(
     }
 
     return { orderNumber, newCustomerId: createAccount ? customerId : null };
+  }
+
+  // M22: only known user-facing messages may reach the customer. Anything
+  // else is logged server-side and replaced with a generic message, so
+  // Prisma/DB internals never leak into the checkout banner.
+  const USER_FACING_MESSAGES: RegExp[] = [
+    /^Your cart is empty\./,
+    /^Invalid quantity in cart\./,
+    /no longer available/,
+    /is not available for ordering right now\./,
+    /left in stock\./,
+    /^Minimum order amount is /,
+    /^Not enough stock for /,
+    /^Transaction ID /,
+    /has already been used on order /,
+    /has already been used on another order/,
+    /^An account already exists/,
+    /^This order has already been placed/,
+  ];
+  function userFacingError(e: unknown): string {
+    const message = e instanceof Error ? e.message : "";
+    if (USER_FACING_MESSAGES.some((re) => re.test(message))) return message;
+    console.error("[placeOrder] unexpected error:", e);
+    return "Could not place your order. Please try again.";
   }
 
   try {
@@ -357,10 +452,35 @@ export async function placeOrder(
       if (target.includes("phone") || target.includes("email")) {
         return { error: "An account already exists — please log in." };
       }
+      // M21: a concurrent replay with the same idempotency key raced the
+      // pre-check — the first request won, so return its order.
+      if (target.includes("idempotencyKey") && idempotencyKey) {
+        const existingOrder = await db.order.findUnique({
+          where: { idempotencyKey },
+          select: { orderNumber: true },
+        });
+        if (existingOrder) {
+          return { ok: true, orderNumber: existingOrder.orderNumber };
+        }
+      }
+      // C1: the partial unique index on (method, trxId) fired — a
+      // concurrent checkout reused this TrxID. Prisma reports the raw
+      // index target as ["method", "trxId"] (or the constraint name in
+      // the message), never as a Prisma-model field.
+      const message = e instanceof Error ? e.message : "";
+      if (
+        target.includes("trxId") ||
+        target.includes("method") ||
+        message.includes("OrderPayment_method_trxId")
+      ) {
+        return {
+          error:
+            "This Transaction ID has already been used on another order. Please check the Transaction ID or contact the shop.",
+        };
+      }
+      console.error("[placeOrder] unexpected unique violation:", e);
       return { error: "Something went wrong while placing your order. Please try again." };
     }
-    return {
-      error: e instanceof Error ? e.message : "Could not place your order.",
-    };
+    return { error: userFacingError(e) };
   }
 }
