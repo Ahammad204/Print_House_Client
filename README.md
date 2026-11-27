@@ -139,7 +139,7 @@ Useful scripts: `npm run lint`, `npx prisma studio` (database browser),
 
 - URL: `/admin/login`
 - Email: `admin@kazigiftprint.com`
-- Password: the value of `ADMIN_PASSWORD` in `.env` (default `Admin@1234` if unset)
+- Password: the value of `ADMIN_PASSWORD` in `.env` (required — the seed fails if it is unset; there is no default password)
 
 **Change the password before going live.** The seed upserts the admin account, so
 the simplest way is:

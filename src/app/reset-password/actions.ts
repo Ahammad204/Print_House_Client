@@ -1,13 +1,15 @@
 "use server";
 
+import { headers } from "next/headers";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { checkRateLimit } from "@/lib/rate-limit";
 import {
   passwordMeetsRequirements,
   PASSWORD_RULE_TEXT,
 } from "@/lib/validation";
 import {
-  consumePasswordResetToken,
+  consumePasswordResetTokenAtomic,
   hashPassword,
   verifyPasswordResetToken,
 } from "@/lib/customer-auth";
@@ -50,6 +52,12 @@ const resetSchema = z
     }
   });
 
+async function clientIp(): Promise<string> {
+  const headerStore = await headers();
+  const forwarded = headerStore.get("x-forwarded-for");
+  return forwarded?.split(",")[0]?.trim() || "unknown";
+}
+
 export async function resetPassword(
   _prevState: ResetPasswordState,
   formData: FormData,
@@ -63,6 +71,22 @@ export async function resetPassword(
     return { error: parsed.error.issues[0]?.message ?? "Please check the form." };
   }
 
+  // Modest rate limit: 5 attempts / 10 minutes per IP and per reset link,
+  // so a stolen link cannot be brute-forced or replayed at will.
+  const ip = await clientIp();
+  const byIp = checkRateLimit(`reset-password-ip:${ip}`, 5, 10 * 60 * 1000);
+  const byToken = checkRateLimit(
+    `reset-password:${parsed.data.token}`,
+    5,
+    10 * 60 * 1000,
+  );
+  const blocked = !byIp.allowed ? byIp : !byToken.allowed ? byToken : null;
+  if (blocked) {
+    return {
+      error: `Too many attempts. Please try again in ${blocked.retryAfterSeconds} seconds.`,
+    };
+  }
+
   const customer = await verifyPasswordResetToken(parsed.data.token);
   if (!customer) {
     return {
@@ -71,11 +95,37 @@ export async function resetPassword(
     };
   }
 
-  await db.customer.update({
-    where: { id: customer.id },
-    data: { password: await hashPassword(parsed.data.password) },
+  // Consume the token and change the password atomically: the token is
+  // marked used only if it is still unused and unexpired, in the same
+  // transaction as the password update. If zero rows matched, a
+  // concurrent request already used the token — fail the reset.
+  // The password change also bumps tokenVersion (invalidating all other
+  // sessions) and deletes any other unused reset tokens for the customer.
+  const hashed = await hashPassword(parsed.data.password);
+  const result = await db.$transaction(async (tx) => {
+    const consumed = await consumePasswordResetTokenAtomic(
+      tx,
+      parsed.data.token,
+    );
+    if (consumed === 0) return { ok: false as const };
+    await tx.customer.update({
+      where: { id: customer.id },
+      data: {
+        password: hashed,
+        tokenVersion: { increment: 1 },
+      },
+    });
+    await tx.customerResetToken.deleteMany({
+      where: { customerId: customer.id, usedAt: null },
+    });
+    return { ok: true as const };
   });
-  await consumePasswordResetToken(parsed.data.token);
+  if (!result.ok) {
+    return {
+      error:
+        "This reset link is invalid or has expired. Please request a new one.",
+    };
+  }
 
   return { ok: true };
 }

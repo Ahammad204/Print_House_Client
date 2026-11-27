@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { jwtVerify, SignJWT } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 /**
@@ -27,9 +28,9 @@ export async function verifyPassword(
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
-  if (!secret) {
+  if (!secret || secret.length < 32) {
     throw new Error(
-      "JWT_SECRET is not set. Add it to your environment variables.",
+      "JWT_SECRET is not set or is shorter than 32 characters. Set a long random secret (at least 32 characters) in your environment variables.",
     );
   }
   return new TextEncoder().encode(secret);
@@ -43,13 +44,35 @@ export async function createCustomerSessionToken(
   const maxAge = rememberMe
     ? REMEMBER_MAX_AGE_SECONDS
     : SESSION_MAX_AGE_SECONDS;
-  const token = await new SignJWT({ sub: customerId, typ: "customer" })
+  const customer = await db.customer.findUnique({
+    where: { id: customerId },
+    select: { tokenVersion: true },
+  });
+  const token = await new SignJWT({
+    sub: customerId,
+    typ: "customer",
+    tokenVersion: customer?.tokenVersion ?? 0,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(customerId)
     .setIssuedAt()
     .setExpirationTime(`${maxAge}s`)
     .sign(secret);
   return { token, maxAge };
+}
+
+/**
+ * Invalidate every existing customer session token by bumping the stored
+ * tokenVersion. Call on password change, password reset, and
+ * "log out everywhere". The next token issued carries the new version.
+ */
+export async function bumpCustomerTokenVersion(
+  customerId: string,
+): Promise<void> {
+  await db.customer.update({
+    where: { id: customerId },
+    data: { tokenVersion: { increment: 1 } },
+  });
 }
 
 export type CustomerSession = {
@@ -75,6 +98,9 @@ export async function getCustomerSession(): Promise<CustomerSession | null> {
       where: { id: customerId },
     });
     if (!customer || customer.status !== "active") return null;
+    // A token issued before a password change / reset / log-out-everywhere
+    // carries a stale tokenVersion and is rejected.
+    if (payload.tokenVersion !== customer.tokenVersion) return null;
 
     return {
       id: customer.id,
@@ -135,11 +161,16 @@ export function hashResetToken(rawToken: string): string {
   return createHash("sha256").update(rawToken).digest("hex");
 }
 
-/** Create a reset token for a customer. Returns the raw token (show once). */
+/** Create a reset token for a customer. Returns the raw token (show once).
+ * Any prior unused tokens for this customer are invalidated first, so
+ * only the newest link ever works. */
 export async function createPasswordResetToken(
   customerId: string,
 ): Promise<string> {
   const rawToken = randomBytes(32).toString("hex");
+  await db.customerResetToken.deleteMany({
+    where: { customerId, usedAt: null },
+  });
   await db.customerResetToken.create({
     data: {
       customerId,
@@ -175,4 +206,25 @@ export async function consumePasswordResetToken(
     where: { tokenHash: hashResetToken(rawToken) },
     data: { usedAt: new Date() },
   });
+}
+
+/**
+ * Atomically consume a reset token inside a transaction: marks it used
+ * only if it is still unused and unexpired. Returns the number of rows
+ * matched (0 = already used, expired, or a concurrent request won —
+ * the caller must fail the reset in that case).
+ */
+export async function consumePasswordResetTokenAtomic(
+  tx: Prisma.TransactionClient,
+  rawToken: string,
+): Promise<number> {
+  const result = await tx.customerResetToken.updateMany({
+    where: {
+      tokenHash: hashResetToken(rawToken),
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    data: { usedAt: new Date() },
+  });
+  return result.count;
 }

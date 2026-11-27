@@ -20,12 +20,12 @@ export function isValidBdPhone(raw: string): boolean {
   return normalizeBdPhone(raw) !== null;
 }
 
-/** Minimum password rule for customers: at least 8 chars, one letter, one digit. */
+/** Minimum password rule for customers: at least 12 chars, one letter, one digit. */
 export function passwordMeetsRequirements(password: string): boolean {
   return (
-    password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password)
+    password.length >= 12 && /[A-Za-z]/.test(password) && /\d/.test(password)
   );
 }
 
 export const PASSWORD_RULE_TEXT =
-  "Password must be at least 8 characters and include a letter and a number.";
+  "Password must be at least 12 characters and include a letter and a number.";

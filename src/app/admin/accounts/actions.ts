@@ -101,6 +101,17 @@ export async function updateTransaction(
   });
   if (!existing) return { success: false, error: "Transaction not found" };
 
+  // M11: order-linked rows (auto-created pay:/refund: income) change only
+  // via the order payment/refund flows — editing or deleting one here
+  // would silently break the exactly-one-income rule for that order.
+  if (existing.orderId) {
+    return {
+      success: false,
+      error:
+        "This transaction is linked to an order and can only be changed through the order payment or refund flow.",
+    };
+  }
+
   const categoryError = await validateCategory(data.categoryId, data.type);
   if (categoryError) return { success: false, error: categoryError };
 
@@ -127,6 +138,15 @@ export async function deleteTransaction(id: string): Promise<ActionResult> {
     where: { id },
   });
   if (!existing) return { success: false, error: "Transaction not found" };
+
+  // M11: same guard as updateTransaction — see above.
+  if (existing.orderId) {
+    return {
+      success: false,
+      error:
+        "This transaction is linked to an order and can only be changed through the order payment or refund flow.",
+    };
+  }
 
   await prisma.accountTransaction.delete({ where: { id } });
 

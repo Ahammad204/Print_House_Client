@@ -10,6 +10,7 @@ import {
   MOBILE_BANKING_METHODS,
   addOrderHistory,
   createNotification,
+  normalizeTrxId,
   recordOrderIncome,
   recordOrderRefund,
   recomputePaymentStatus,
@@ -22,6 +23,20 @@ function revalidateOrder(orderId: string) {
   revalidatePath(`/admin/orders/${orderId}`);
   revalidatePath("/admin/orders");
   revalidatePath("/admin/dashboard");
+}
+
+/**
+ * M5/M8: serialise payment actions per order. Locking the order row
+ * (FOR UPDATE) at the start of the transaction makes concurrent
+ * markPaymentReceived / verifyMobilePayment / cancelOrder calls for the
+ * same order run one after another, so each sees the previous one's
+ * verified sum instead of a stale one.
+ */
+async function lockOrderRow(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+): Promise<void> {
+  await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
 }
 
 const deliverySchema = z.object({
@@ -76,6 +91,7 @@ export async function cancelOrder(
   }
   try {
     await db.$transaction(async (tx) => {
+      await lockOrderRow(tx, orderId);
       const order = await tx.order.findUnique({
         where: { id: orderId },
         include: { payments: true },
@@ -119,6 +135,13 @@ export async function cancelOrder(
               verifiedTotal >= total ? "refunded" : "partially_refunded",
           },
         });
+      } else {
+        // M10: a cancelled order with no verified payment must not keep
+        // "pending_verification" — nothing is awaiting verification now.
+        await tx.order.update({
+          where: { id: order.id },
+          data: { paymentStatus: "unpaid" },
+        });
       }
     });
     revalidateOrder(orderId);
@@ -142,6 +165,7 @@ export async function markPaymentReceived(
   const admin = await requireAdmin();
   try {
     await db.$transaction(async (tx) => {
+      await lockOrderRow(tx, orderId);
       const order = await tx.order.findUnique({
         where: { id: orderId },
         include: { payments: true },
@@ -214,6 +238,7 @@ export async function verifyMobilePayment(
   const admin = await requireAdmin();
   try {
     await db.$transaction(async (tx) => {
+      await lockOrderRow(tx, orderId);
       const payment = await tx.orderPayment.findUnique({
         where: { id: paymentId },
         include: { order: true },
@@ -233,6 +258,39 @@ export async function verifyMobilePayment(
       if (payment.status !== "pending_verification") {
         throw new Error(`This payment is already ${payment.status}.`);
       }
+      // C1: refuse to verify a TrxID already verified on ANOTHER order
+      // (TrxIDs are normalised on write, but older rows may be mixed
+      // case, so normalise here too before comparing).
+      if (payment.trxId) {
+        const duplicate = await tx.orderPayment.findFirst({
+          where: {
+            method: payment.method,
+            trxId: normalizeTrxId(payment.trxId),
+            status: "verified",
+            id: { not: payment.id },
+          },
+          include: { order: { select: { orderNumber: true } } },
+        });
+        if (duplicate) {
+          throw new Error(
+            `This Transaction ID has already been verified on order ${duplicate.order.orderNumber}. Payment not verified.`,
+          );
+        }
+      }
+      // M8: cap the income at what is still unpaid — never record more
+      // than the remaining balance, even if this payment's amount is
+      // larger (e.g. a customer overpaid).
+      const verifiedTotal = await tx.orderPayment
+        .findMany({
+          where: { orderId, status: "verified" },
+          select: { amount: true },
+        })
+        .then((rows) => rows.reduce((s, p) => s + Number(p.amount), 0));
+      const remaining = Number(payment.order.total) - verifiedTotal;
+      if (remaining <= 0) {
+        throw new Error("This order is already fully paid.");
+      }
+      const incomeAmount = Math.min(Number(payment.amount), remaining);
       const updated = await tx.orderPayment.update({
         where: { id: payment.id },
         data: {
@@ -244,7 +302,11 @@ export async function verifyMobilePayment(
       await recordOrderIncome(
         tx,
         { id: payment.order.id, orderNumber: payment.order.orderNumber },
-        { id: updated.id, method: updated.method, amount: updated.amount }
+        {
+          id: updated.id,
+          method: updated.method,
+          amount: new Prisma.Decimal(incomeAmount.toFixed(2)),
+        }
       );
       await recomputePaymentStatus(tx, orderId);
       await createNotification(

@@ -2,7 +2,11 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { COOKIE_NAME } from "@/lib/auth";
+import {
+  bumpAdminTokenVersion,
+  COOKIE_NAME,
+  getAdminSession,
+} from "@/lib/auth";
 
 /**
  * Logs the admin out by deleting the session cookie.
@@ -11,6 +15,21 @@ import { COOKIE_NAME } from "@/lib/auth";
  * into the client bundle.
  */
 export async function logout(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(COOKIE_NAME);
+  redirect("/admin/login");
+}
+
+/**
+ * Logs the admin out on EVERY device: bumps tokenVersion so all existing
+ * session tokens (including this one) stop validating, then clears this
+ * device's cookie and sends the admin back to the login page.
+ */
+export async function logoutEverywhere(): Promise<void> {
+  const session = await getAdminSession();
+  if (session) {
+    await bumpAdminTokenVersion(session.id);
+  }
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
   redirect("/admin/login");

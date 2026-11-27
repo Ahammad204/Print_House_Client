@@ -1,4 +1,5 @@
 import { db as prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 import { toNumber } from "@/lib/utils";
 import ReportView, {
@@ -59,6 +60,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  await requireAdmin();
   const sp = await searchParams;
   const view: ReportViewType =
     sp.view === "monthly" || sp.view === "range" ? sp.view : "daily";

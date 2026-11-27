@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db as prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,7 @@ export default async function AccountCategoriesPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  await requireAdmin();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const type =

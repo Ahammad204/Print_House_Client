@@ -8,12 +8,13 @@ datasource db {
 }
 
 model Admin {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  password     String
+  tokenVersion Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model ProductCategory {
@@ -104,6 +105,7 @@ model AccountTransaction {
   @@index([type])
   @@index([categoryId])
   @@index([orderId])
+  @@unique([orderId, reference])
 }
 
 model WebsiteSetting {
@@ -124,6 +126,7 @@ model Customer {
   email     String?  @unique
   password  String
   status    String   @default("active") // active | disabled
+  tokenVersion Int   @default(0)
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -226,6 +229,7 @@ model Order {
   giftMessage     String?
   cancelReason    String?
   stockDeducted   Boolean  @default(false)
+  idempotencyKey  String?  @unique
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -260,6 +264,7 @@ model OrderItem {
   product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
+  @@unique([orderId, productId])
 }
 
 model OrderPayment {

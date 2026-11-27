@@ -2,10 +2,7 @@
 
 import { headers } from "next/headers";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { normalizeBdPhone } from "@/lib/validation";
-import { createPasswordResetToken } from "@/lib/customer-auth";
 
 export type ForgotPasswordState = {
   error?: string;
@@ -58,22 +55,11 @@ export async function requestPasswordReset(
     };
   }
 
-  const phone = normalizeBdPhone(identifier);
-  let customer = null;
-  if (phone) {
-    customer = await db.customer.findUnique({ where: { phone } });
-  } else if (identifier.includes("@")) {
-    customer = await db.customer.findUnique({
-      where: { email: identifier.toLowerCase() },
-    });
-  }
-
-  if (customer && customer.status === "active") {
-    // The raw token is never shown on screen or returned to the client.
-    // The shop shares the one-time reset link with the customer
-    // (generated from the customer detail page in the admin panel).
-    await createPasswordResetToken(customer.id);
-  }
-
+  // No reset token is created here: there is no email/SMS sender, so a
+  // token created by this form would sit unused in the database and could
+  // never reach the customer. The only path that creates a reset token is
+  // the admin-generated shareable link
+  // (generatePasswordResetLink in src/app/admin/customers/[customerId]/actions.ts),
+  // which the shop shares privately with the customer.
   return { ok: true, message: GENERIC_MESSAGE };
 }

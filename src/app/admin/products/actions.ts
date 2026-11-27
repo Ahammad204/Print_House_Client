@@ -219,12 +219,50 @@ export async function updateProduct(
   return { success: true };
 }
 
+/**
+ * M12: a product referenced by any non-cancelled order cannot be deleted
+ * — deleting it would null its OrderItems (onDelete: SetNull) and the
+ * order would then confirm/ship with no stock movement at all.
+ */
+async function findBlockingOrderItem(
+  productIds: string[],
+): Promise<{ productName: string; orderNumber: string } | null> {
+  const item = await prisma.orderItem.findFirst({
+    where: {
+      productId: { in: productIds },
+      order: { status: { not: "cancelled" } },
+    },
+    include: {
+      product: { select: { name: true } },
+      order: { select: { orderNumber: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!item) return null;
+  return {
+    productName: item.product?.name ?? "This product",
+    orderNumber: item.order.orderNumber,
+  };
+}
+
+function blockingDeleteError(blocking: {
+  productName: string;
+  orderNumber: string;
+}): ActionResult {
+  return {
+    success: false,
+    error: `Cannot delete "${blocking.productName}" — it is referenced by active order ${blocking.orderNumber}. Set the product to unavailable instead of deleting it.`,
+  };
+}
+
 export async function deleteProduct(id: string): Promise<ActionResult> {
   await requireAdmin();
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
     return { success: false, error: "Product not found." };
   }
+  const blocking = await findBlockingOrderItem([id]);
+  if (blocking) return blockingDeleteError(blocking);
   await prisma.$transaction([
     prisma.productImage.deleteMany({ where: { productId: id } }),
     prisma.product.delete({ where: { id } }),
@@ -238,6 +276,8 @@ export async function bulkDeleteProducts(ids: string[]): Promise<ActionResult> {
   if (ids.length === 0) {
     return { success: false, error: "No products selected." };
   }
+  const blocking = await findBlockingOrderItem(ids);
+  if (blocking) return blockingDeleteError(blocking);
   await prisma.$transaction([
     prisma.productImage.deleteMany({ where: { productId: { in: ids } } }),
     prisma.product.deleteMany({ where: { id: { in: ids } } }),
